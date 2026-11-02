@@ -34,6 +34,14 @@ def get_model(model_name, num_classes=1, seed=None, input_size=128, pretrained=N
         'lightm-unet': 'lightm_unet',
         'mamba_flood_lite': 'mambafloodlite',
         'mamba-flood-lite': 'mambafloodlite',
+        'satreg': 'satreg_cmunet',
+        'satreg-cmunet': 'satreg_cmunet',
+        'satreg_cm_unet': 'satreg_cmunet',
+        'cmunet': 'satreg_cmunet',
+        'cm-unet': 'satreg_cmunet',
+        'cm_unet': 'satreg_cmunet',
+        'hybrid_seg': 'hybridseg',
+        'hybrid-seg': 'hybridseg',
     }
     canonical_name = alias_map.get(model_name.lower(), model_name.lower())
 
@@ -68,6 +76,11 @@ def get_model(model_name, num_classes=1, seed=None, input_size=128, pretrained=N
         kwargs['input_size'] = input_size
     if 'pretrained' in sig.parameters:
         kwargs['pretrained'] = pretrained
+    if 'variant' in sig.parameters:
+        if model_name.lower() in ('cmunet', 'cm-unet', 'cm_unet'):
+            kwargs['variant'] = 'cmunet'
+        else:
+            kwargs['variant'] = 'satreg'
 
     model = module.build_model(**kwargs)
 
@@ -75,3 +88,4 @@ def get_model(model_name, num_classes=1, seed=None, input_size=128, pretrained=N
         print(f"[OK] Model '{canonical_name}' initialized with seed {seed} (pretrained={pretrained})")
 
     return model
+

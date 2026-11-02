@@ -15,7 +15,9 @@ All Mamba architectures in this repository are faithfully ported from their orig
 | Model | Original Publication | Source Repository | Commit Hash | Key Architectural Focus |
 | :--- | :--- | :--- | :--- | :--- |
 | **MambaFloodLite** | ICCE MambaFloodLite | Local Verified Implementation | `main` | AxialDW + 4-directional SS2D selective scan + EESP bottleneck (285K params) |
-| **LCMamNet** | Fan et al. (*arXiv:2607.24184*, 2026) | [Haoyu096/LCMamNet](https://github.com/Haoyu096/LCMamNet) | `8f3ba5bfce33f8133a4a63f357d27d171223d87c` | Cross-Directional Conv (CDConv), BiMamba multi-scale fusion, SBA skip connections |
+| **LCMamNet** | Fan et al. (*arXiv:2607.24184*, 2026) | [Haoyu096/LCMamNet](https://github.com/Haoyu096/LCMamNet) | `8f3ba5bfce33f8133a4a63f357d27d171223d87c` | Cross-Directional Conv (CDConv), BiMamba multi-scale fusion, SBA skip connections (Jetson Orin NX, 102.6 FPS) |
+| **SatReg CM-UNet** | Humes & Mohsenin (*DAC '26*, *arXiv:2604.10306*) | [XiaoBuL/CM-UNet](https://github.com/XiaoBuL/CM-UNet) | `a8597034c44238e88880e640984eebead1ff477c` | Hardware-aware tuned CM-UNet: ResNet encoder + MSAA bridge + CSMamba (SS2D) decoder (Jetson Orin Nano, 9.11 FPS, 8.76W) |
+| **HybridSeg** | Fu et al. (*Sci Rep*, 2026; *DOI:10.1038/s41598-026-47010-x*) | Verified Implementation | `main` | Structure-Aware Preprocessing (SAP) + 4-way SADM selective scan with deformable spatial attention + Gated Decoder (Jetson AGX Orin, 27.1 FPS) |
 | **UltraLight VM-UNet** | Wu et al. (*Patterns*, 2024; *arXiv:2403.19654*) | [wurenkai/UltraLight-VM-UNet](https://github.com/wurenkai/UltraLight-VM-UNet) | `27e44181b3cd5b0b2ab3ad1e3ddb8cad67368fbd` | Parallel Vision Mamba (PVM) layer (0.05M params), SC-Attention Bridge |
 | **LightM-UNet** | Liao et al. (*arXiv:2403.05246*, 2024) | [MrBlankness/LightM-UNet](https://github.com/MrBlankness/LightM-UNet) | `38148ef8ac408014be0d668d9a98e2e97a68ed99` | Residual Mamba Blocks (ResMambaBlock) + DWConv skip upsampling |
 | **SegFormer (B0)** | Xie et al. (*NeurIPS 2021*) | Official MiT-B0 | Standard Baseline | Lightweight hierarchical transformer |
@@ -49,6 +51,12 @@ python main.py --model mambafloodlite --dataset floodkaggle --size 128 --batch_s
 
 # Train LCMamNet
 python main.py --model lcmamnet --dataset floodkaggle --size 128 --batch_size 4 --epochs 50
+
+# Train SatReg CM-UNet (Jetson Orin Nano tuned)
+python main.py --model satreg --dataset floodkaggle --size 128 --batch_size 4 --epochs 50
+
+# Train HybridSeg (Jetson AGX Orin tuned)
+python main.py --model hybridseg --dataset floodkaggle --size 128 --batch_size 4 --epochs 50
 
 # Train UltraLight VM-UNet
 python main.py --model ultralight_vmunet --dataset floodkaggle --size 128 --batch_size 4 --epochs 50
@@ -110,3 +118,4 @@ flood_mamba_edge/
 
 ## 📄 License
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+

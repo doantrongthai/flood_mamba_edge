@@ -115,3 +115,4 @@ def Mamba(d_model: int, d_state: int = 16, d_conv: int = 4, expand: int = 2, **k
         except Exception:
             pass
     return PurePyTorchMamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand, **kwargs)
+
