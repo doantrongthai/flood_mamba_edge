@@ -1,0 +1,57 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Datasets and Checkpoints
+floodkaggle/
+floodkaggle.zip
+aifloodsense/
+aifloodsense.zip
+floodscene/
+floodscene.zip
+floodvn/
+floodvn.zip
+*.pth
+*.pt
+*.onnx
+*.tflite
+*.engine
+
+# Outputs & experiment logs
+outputs/
+wandb/
+.ipynb_checkpoints/
+repro_run*/
+seed_*/
+cross_eval_*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
