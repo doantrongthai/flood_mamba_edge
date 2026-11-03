@@ -29,7 +29,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.mamba_block import PurePyTorchMamba
+from models.mamba_block import Mamba
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -143,7 +143,7 @@ class SADMBlock(nn.Module):
         self.dim = dim
         self.norm = nn.LayerNorm(dim)
 
-        self.mamba = PurePyTorchMamba(d_model=dim, d_state=d_state, expand=2)
+        self.mamba = Mamba(d_model=dim, d_state=d_state, expand=2)
         self.deformable_attn = DeformableSpatialAttention(dim)
 
         self.coord_conv = nn.Sequential(
