@@ -11,3 +11,4 @@ timm
 matplotlib
 onnx
 onnxscript
+ninja

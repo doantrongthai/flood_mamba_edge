@@ -21,9 +21,9 @@ class DeployableModel(nn.Module):
         return out
 
 
-def export_onnx(model_name, weights_path, output_path, input_size=128, num_classes=1, opset=13):
+def export_onnx(model_name, weights_path, output_path, input_size=128, num_classes=1, opset=13, device=None):
     print("=" * 70)
-    print("FLOOD MAMBA EDGE EDGE DEPLOYMENT EXPORTER (ONNX)")
+    print("FLOOD MAMBA EDGE DEPLOYMENT EXPORTER (ONNX)")
     print("=" * 70)
     print(f"Model Architecture : {model_name}")
     print(f"Weights Checkpoint : {weights_path}")
@@ -31,6 +31,9 @@ def export_onnx(model_name, weights_path, output_path, input_size=128, num_class
     print(f"Output ONNX Path   : {output_path}")
     print(f"ONNX Opset         : {opset}")
     print("=" * 70)
+
+    if device is None:
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # 1. Load Model and inspect checkpoint config
     if weights_path and os.path.exists(weights_path):
@@ -47,12 +50,14 @@ def export_onnx(model_name, weights_path, output_path, input_size=128, num_class
         model = get_model(model_name, num_classes=num_classes, input_size=input_size)
         print(f"[INFO] No valid checkpoint provided. Exporting with initialized weights (num_classes={num_classes}).")
 
+    model = model.to(device)
     model.eval()
     deploy_model = DeployableModel(model)
-    dummy_input = torch.randn(1, 3, input_size, input_size)
+    dummy_input = torch.randn(1, 3, input_size, input_size, device=device)
 
     # 2. Export to ONNX
     os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else '.', exist_ok=True)
+    exported = False
     try:
         torch.onnx.export(
             deploy_model,
@@ -65,9 +70,31 @@ def export_onnx(model_name, weights_path, output_path, input_size=128, num_class
             output_names=['output'],
             dynamo=False
         )
-        print(f"[OK] ONNX model exported: {output_path}")
+        print(f"[OK] ONNX model exported successfully: {output_path}")
+        exported = True
+    except Exception as e:
+        print(f"[INFO] Direct device export notice ({e}). Falling back to CPU portable trace...")
+        try:
+            deploy_model = deploy_model.cpu()
+            dummy_input = dummy_input.cpu()
+            torch.onnx.export(
+                deploy_model,
+                dummy_input,
+                output_path,
+                export_params=True,
+                opset_version=opset,
+                do_constant_folding=False,
+                input_names=['input'],
+                output_names=['output'],
+                dynamo=False
+            )
+            print(f"[OK] ONNX model exported successfully via CPU portable trace: {output_path}")
+            exported = True
+        except Exception as e2:
+            print(f"[WARN] Export failed: {e2}")
 
-        # 3. Verify ONNX model if onnx package is installed
+    # 3. Verify ONNX model if onnx package is installed
+    if exported and os.path.exists(output_path):
         try:
             import onnx
             onnx_model = onnx.load(output_path)
@@ -79,12 +106,6 @@ def export_onnx(model_name, weights_path, output_path, input_size=128, num_class
         file_size_kb = os.path.getsize(output_path) / 1024.0
         print(f"Model File Size: {file_size_kb:.2f} KB\n")
 
-    except (ModuleNotFoundError, ImportError) as e:
-        print(f"[INFO] Missing dependency for ONNX export ({e}).")
-        print("       Run 'pip install onnx onnxscript' to enable ONNX export.")
-    except Exception as e:
-        print(f"[WARN] Export failed: {e}")
-
 
 def main():
     parser = argparse.ArgumentParser(description="FLOOD MAMBA EDGE ONNX Exporter")
@@ -94,6 +115,7 @@ def main():
     parser.add_argument('--num_classes', type=int, default=1)
     parser.add_argument('--output', type=str, default='outputs/mambafloodlite.onnx')
     parser.add_argument('--opset', type=int, default=13)
+    parser.add_argument('--device', type=str, default=None)
     args = parser.parse_args()
 
     export_onnx(
@@ -102,7 +124,8 @@ def main():
         output_path=args.output,
         input_size=args.size,
         num_classes=args.num_classes,
-        opset=args.opset
+        opset=args.opset,
+        device=args.device
     )
 
 
