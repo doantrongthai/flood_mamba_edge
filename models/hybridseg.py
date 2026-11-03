@@ -46,7 +46,7 @@ class GaussianBlur2D(nn.Module):
         kernel_1d = torch.exp(-0.5 * (x / sigma) ** 2)
         kernel_1d = kernel_1d / kernel_1d.sum()
         kernel_2d = kernel_1d.unsqueeze(1) * kernel_1d.unsqueeze(0)
-        kernel_2d = kernel_2d.expand(channels, 1, kernel_size, kernel_size)
+        kernel_2d = kernel_2d.expand(channels, 1, kernel_size, kernel_size).contiguous().clone()
         self.register_buffer('kernel', kernel_2d)
         self.channels = channels
         self.padding = radius

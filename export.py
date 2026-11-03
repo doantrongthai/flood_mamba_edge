@@ -113,7 +113,7 @@ def main():
     parser.add_argument('--weights', type=str, default=None, help="Path to trained .pth checkpoint")
     parser.add_argument('--size', type=int, default=128, help="Input size (default: 128)")
     parser.add_argument('--num_classes', type=int, default=1)
-    parser.add_argument('--output', type=str, default='outputs/mambafloodlite.onnx')
+    parser.add_argument('--output', '--output_path', type=str, default='outputs/mambafloodlite.onnx', help="Output ONNX file path")
     parser.add_argument('--opset', type=int, default=13)
     parser.add_argument('--device', type=str, default=None)
     args = parser.parse_args()
