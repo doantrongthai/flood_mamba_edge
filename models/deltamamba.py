@@ -116,3 +116,4 @@ class DeltaMamba(nn.Module):
 
 def build_model(num_classes: int = 1, input_size: int = 128, in_channels: int = 3, **kwargs) -> DeltaMamba:
     return DeltaMamba(num_classes=num_classes, in_channels=in_channels, input_size=input_size, **kwargs)
+
