@@ -1,35 +1,46 @@
 import torch
 import torch.nn as nn
-from models.lcmam_variants import ASDConv, ASDBR_Block, LitePixelShuffleUpBlock, _scaled_bottleneck
-from models.aquamam_variants import DualPathMambaFusion
+import torch.nn.functional as F
+from models.lcmam_variants import _scaled_bottleneck
+from models.aquamam_variants import (
+    OmniASDConv,
+    OmniASDBR_Block,
+    BiCrossScanMambaFusion,
+    SpatialBoundaryPixelShuffle,
+    DifferentiableLaplacianGuidance
+)
 
 
 class Model7(nn.Module):
     """
-    Model 7: Dual-Path Hybrid AquaMamNet (DualPath-Aqua).
-    Parallel local 2D depthwise conv and global 1D BiMamba with adaptive gating.
+    Model 7: 4-Way Bidirectional Cross-Scan Mamba Super-Aqua (BiCross-Aqua).
+    Eliminates 1D scanning raster bias by scanning in 4 directions:
+    Horizontal forward/backward and Vertical forward/backward across pyramid stages.
     """
     def __init__(self, in_channels=3, num_classes=1, base_c=32, input_size=128, **kwargs):
         super().__init__()
         c = base_c
-        self.inc = nn.Sequential(ASDConv(in_channels, c), ASDConv(c, c))
+        self.inc = nn.Sequential(OmniASDConv(in_channels, c), OmniASDConv(c, c))
+        self.lap_guidance = DifferentiableLaplacianGuidance(in_channels=c)
         self.pool = nn.MaxPool2d(2, 2)
 
-        self.stage1 = ASDBR_Block(c, c * 2, bottleneck=_scaled_bottleneck(c * 2))
-        self.stage2 = ASDBR_Block(c * 2, c * 4, bottleneck=_scaled_bottleneck(c * 4))
-        self.stage3 = ASDBR_Block(c * 4, c * 8, bottleneck=_scaled_bottleneck(c * 8))
-        self.stage4 = ASDBR_Block(c * 8, c * 8, bottleneck=_scaled_bottleneck(c * 8))
+        self.stage1 = OmniASDBR_Block(c, c * 2, bottleneck=_scaled_bottleneck(c * 2))
+        self.stage2 = OmniASDBR_Block(c * 2, c * 4, bottleneck=_scaled_bottleneck(c * 4))
+        self.stage3 = OmniASDBR_Block(c * 4, c * 8, bottleneck=_scaled_bottleneck(c * 8))
+        self.stage4 = OmniASDBR_Block(c * 8, c * 8, bottleneck=_scaled_bottleneck(c * 8))
 
-        self.mamba_fusion = DualPathMambaFusion([c * 4, c * 8, c * 8], embed_dim=64, expand=1)
+        self.mamba_fusion = BiCrossScanMambaFusion([c * 4, c * 8, c * 8], embed_dim=64)
 
         self.dec_conv4 = nn.Conv2d(c * 8, c * 4, kernel_size=1)
-        self.up4 = LitePixelShuffleUpBlock(in_c=c * 4, skip_c=c * 8, out_c=c * 4)
+        self.up4 = SpatialBoundaryPixelShuffle(in_c=c * 4, skip_c=c * 8, out_c=c * 4)
 
         self.dec_conv3 = nn.Conv2d(c * 4, c * 2, kernel_size=1)
-        self.up3 = LitePixelShuffleUpBlock(in_c=c * 2, skip_c=c * 4, out_c=c * 2)
+        self.up3 = SpatialBoundaryPixelShuffle(in_c=c * 2, skip_c=c * 4, out_c=c * 2)
+
+        self.aux_head = nn.Conv2d(c * 2, num_classes, kernel_size=1)
 
         self.dec_conv2 = nn.Conv2d(c * 2, c, kernel_size=1)
-        self.up2 = LitePixelShuffleUpBlock(in_c=c, skip_c=c * 2, out_c=c)
+        self.up2 = SpatialBoundaryPixelShuffle(in_c=c, skip_c=c * 2, out_c=c)
 
         self.up1_conv = nn.Conv2d(c, c * 4, kernel_size=1)
         self.up1_ps = nn.PixelShuffle(upscale_factor=2)
@@ -40,9 +51,11 @@ class Model7(nn.Module):
             nn.Conv2d(c, num_classes, kernel_size=1)
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor):
         x0 = self.inc(x)
-        x1 = self.stage1(self.pool(x0))
+        x0_guided = self.lap_guidance(x0)
+
+        x1 = self.stage1(self.pool(x0_guided))
         x2 = self.stage2(self.pool(x1))
         x3 = self.stage3(self.pool(x2))
         x4 = self.stage4(self.pool(x3))
@@ -51,10 +64,19 @@ class Model7(nn.Module):
 
         d4 = self.up4(self.dec_conv4(f4), f3)
         d3 = self.up3(self.dec_conv3(d4), f2)
-        d2 = self.up2(self.dec_conv2(d3), x1)
 
+        if self.training:
+            aux_out = self.aux_head(d3)
+            aux_out = F.interpolate(aux_out, size=x.shape[2:], mode='bilinear', align_corners=False)
+        else:
+            aux_out = None
+
+        d2 = self.up2(self.dec_conv2(d3), x1)
         d1 = self.up1_ps(self.up1_conv(d2))
-        out = self.final_fuse(torch.cat([d1, x0], dim=1))
+        out = self.final_fuse(torch.cat([d1, x0_guided], dim=1))
+
+        if self.training and aux_out is not None:
+            return out, aux_out
         return out
 
 

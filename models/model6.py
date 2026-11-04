@@ -1,14 +1,21 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from typing import List
 from models.mamba_block import Mamba
-from models.lcmamnet import TokenProjector, BiMambaPreNorm
-from models.lcmam_variants import ASDConv, ASDBR_Block, LitePixelShuffleUpBlock, _scaled_bottleneck
-from models.aquamam_variants import MultiDilatedSGR
+from models.lcmamnet import TokenProjector, BiMambaPreNorm, _scaled_bottleneck
+from models.aquamam_variants import (
+    OmniASDConv,
+    OmniASDBR_Block,
+    SpatialBoundaryPixelShuffle,
+    DifferentiableLaplacianGuidance,
+    CoordSGR
+)
 
 
-class MultiDilMambaFusion(nn.Module):
-    def __init__(self, in_dims: List[int], embed_dim: int = 64, expand: int = 1):
+class CoordScaleAwareMambaFusion(nn.Module):
+    """Scale-Aware Multi-Scale Mamba Fusion with Topographic Coordinate-Aware SGR Refiners"""
+    def __init__(self, in_dims: List[int], embed_dim: int = 64):
         super().__init__()
         self.embed_dim = embed_dim
         self.projs_in = nn.ModuleList([TokenProjector(c, embed_dim) for c in in_dims])
@@ -16,15 +23,15 @@ class MultiDilMambaFusion(nn.Module):
             nn.Sequential(nn.Conv2d(embed_dim, c, 1, bias=False), nn.BatchNorm2d(c))
             for c in in_dims
         ])
-        self.mixer = BiMambaPreNorm(embed_dim, gamma_init=0.1, expand=expand)
-        self.refiners = nn.ModuleList([MultiDilatedSGR(embed_dim) for _ in in_dims])
+        self.scale_embeddings = nn.Parameter(torch.randn(len(in_dims), embed_dim) * 0.02)
+        self.mixer = BiMambaPreNorm(embed_dim, gamma_init=0.1, expand=1)
+        self.refiners = nn.ModuleList([CoordSGR(embed_dim) for _ in in_dims])
 
     def forward(self, xs: List[torch.Tensor]) -> List[torch.Tensor]:
         batch = xs[0].shape[0]
-        tokens = []
-        shapes = []
+        tokens, shapes = [], []
         for i, x in enumerate(xs):
-            feat = self.projs_in[i](x)
+            feat = self.projs_in[i](x) + self.scale_embeddings[i].view(1, self.embed_dim, 1, 1)
             h, w = feat.shape[-2:]
             shapes.append((h, w))
             tokens.append(feat.flatten(2).transpose(1, 2))
@@ -34,9 +41,8 @@ class MultiDilMambaFusion(nn.Module):
         cursor = 0
         for i, (h, w) in enumerate(shapes):
             length = h * w
-            feat = seq[:, cursor : cursor + length, :]
+            feat = seq[:, cursor : cursor + length, :].transpose(1, 2).reshape(batch, self.embed_dim, h, w)
             cursor += length
-            feat = feat.transpose(1, 2).reshape(batch, self.embed_dim, h, w)
             feat = self.refiners[i](feat)
             out = self.projs_out[i](feat)
             outputs.append(out + xs[i])
@@ -45,30 +51,34 @@ class MultiDilMambaFusion(nn.Module):
 
 class Model6(nn.Module):
     """
-    Model 6: Multi-Dilated AquaMamNet (MultiDil-Aqua).
-    Upgrades SGR with multi-dilation branches (1, 2, 4) for variable flood expanses.
+    Model 6: Topographic Coordinate-Aware SGR Super-Aqua (Coord-Aqua).
+    Injects normalized 2D spatial coordinate coordinates into the spatial refinement gates,
+    providing topographic elevation and flow direction priors to the Mamba bottleneck.
     """
     def __init__(self, in_channels=3, num_classes=1, base_c=32, input_size=128, **kwargs):
         super().__init__()
         c = base_c
-        self.inc = nn.Sequential(ASDConv(in_channels, c), ASDConv(c, c))
+        self.inc = nn.Sequential(OmniASDConv(in_channels, c), OmniASDConv(c, c))
+        self.lap_guidance = DifferentiableLaplacianGuidance(in_channels=c)
         self.pool = nn.MaxPool2d(2, 2)
 
-        self.stage1 = ASDBR_Block(c, c * 2, bottleneck=_scaled_bottleneck(c * 2))
-        self.stage2 = ASDBR_Block(c * 2, c * 4, bottleneck=_scaled_bottleneck(c * 4))
-        self.stage3 = ASDBR_Block(c * 4, c * 8, bottleneck=_scaled_bottleneck(c * 8))
-        self.stage4 = ASDBR_Block(c * 8, c * 8, bottleneck=_scaled_bottleneck(c * 8))
+        self.stage1 = OmniASDBR_Block(c, c * 2, bottleneck=_scaled_bottleneck(c * 2))
+        self.stage2 = OmniASDBR_Block(c * 2, c * 4, bottleneck=_scaled_bottleneck(c * 4))
+        self.stage3 = OmniASDBR_Block(c * 4, c * 8, bottleneck=_scaled_bottleneck(c * 8))
+        self.stage4 = OmniASDBR_Block(c * 8, c * 8, bottleneck=_scaled_bottleneck(c * 8))
 
-        self.mamba_fusion = MultiDilMambaFusion([c * 4, c * 8, c * 8], embed_dim=64, expand=1)
+        self.mamba_fusion = CoordScaleAwareMambaFusion([c * 4, c * 8, c * 8], embed_dim=64)
 
         self.dec_conv4 = nn.Conv2d(c * 8, c * 4, kernel_size=1)
-        self.up4 = LitePixelShuffleUpBlock(in_c=c * 4, skip_c=c * 8, out_c=c * 4)
+        self.up4 = SpatialBoundaryPixelShuffle(in_c=c * 4, skip_c=c * 8, out_c=c * 4)
 
         self.dec_conv3 = nn.Conv2d(c * 4, c * 2, kernel_size=1)
-        self.up3 = LitePixelShuffleUpBlock(in_c=c * 2, skip_c=c * 4, out_c=c * 2)
+        self.up3 = SpatialBoundaryPixelShuffle(in_c=c * 2, skip_c=c * 4, out_c=c * 2)
+
+        self.aux_head = nn.Conv2d(c * 2, num_classes, kernel_size=1)
 
         self.dec_conv2 = nn.Conv2d(c * 2, c, kernel_size=1)
-        self.up2 = LitePixelShuffleUpBlock(in_c=c, skip_c=c * 2, out_c=c)
+        self.up2 = SpatialBoundaryPixelShuffle(in_c=c, skip_c=c * 2, out_c=c)
 
         self.up1_conv = nn.Conv2d(c, c * 4, kernel_size=1)
         self.up1_ps = nn.PixelShuffle(upscale_factor=2)
@@ -79,9 +89,11 @@ class Model6(nn.Module):
             nn.Conv2d(c, num_classes, kernel_size=1)
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor):
         x0 = self.inc(x)
-        x1 = self.stage1(self.pool(x0))
+        x0_guided = self.lap_guidance(x0)
+
+        x1 = self.stage1(self.pool(x0_guided))
         x2 = self.stage2(self.pool(x1))
         x3 = self.stage3(self.pool(x2))
         x4 = self.stage4(self.pool(x3))
@@ -90,10 +102,19 @@ class Model6(nn.Module):
 
         d4 = self.up4(self.dec_conv4(f4), f3)
         d3 = self.up3(self.dec_conv3(d4), f2)
-        d2 = self.up2(self.dec_conv2(d3), x1)
 
+        if self.training:
+            aux_out = self.aux_head(d3)
+            aux_out = F.interpolate(aux_out, size=x.shape[2:], mode='bilinear', align_corners=False)
+        else:
+            aux_out = None
+
+        d2 = self.up2(self.dec_conv2(d3), x1)
         d1 = self.up1_ps(self.up1_conv(d2))
-        out = self.final_fuse(torch.cat([d1, x0], dim=1))
+        out = self.final_fuse(torch.cat([d1, x0_guided], dim=1))
+
+        if self.training and aux_out is not None:
+            return out, aux_out
         return out
 
 
