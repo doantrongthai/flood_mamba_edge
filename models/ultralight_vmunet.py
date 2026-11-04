@@ -249,4 +249,3 @@ def build_model(num_classes=1, input_size=128, pretrained=False, **kwargs):
         bridge=True,
         input_size=input_size
     )
-
