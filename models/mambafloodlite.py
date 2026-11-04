@@ -59,6 +59,80 @@ except ImportError:
     HAS_MAMBA_SSM = False
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Pure PyTorch Selective Scan Implementation
+# ─────────────────────────────────────────────────────────────────────────────
+
+def selective_scan_pure_pytorch(
+    u: torch.Tensor,
+    delta: torch.Tensor,
+    A: torch.Tensor,
+    B: torch.Tensor,
+    C: torch.Tensor,
+    D: Optional[torch.Tensor] = None,
+    z: Optional[torch.Tensor] = None,
+    delta_bias: Optional[torch.Tensor] = None,
+    delta_softplus: bool = False,
+    return_last_state: bool = False,
+) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+    """
+    Pure PyTorch implementation of the 1D/2D selective scan algorithm.
+    Guarantees full compatibility across CPU and GPU without compiled CUDA extensions.
+
+    Args:
+        u: Input tensor of shape (B, total_dim, L)
+        delta: Delta step sizes of shape (B, total_dim, L)
+        A: Transition matrix parameter of shape (total_dim, d_state)
+        B: Input projection of shape (B, G, d_state, L)
+        C: Output projection of shape (B, G, d_state, L)
+        D: Skip connection parameter of shape (total_dim,)
+        z: Optional gating tensor of shape (B, total_dim, L)
+        delta_bias: Optional bias for delta of shape (total_dim,)
+        delta_softplus: Whether to apply softplus to delta
+        return_last_state: Whether to return the final hidden state
+
+    Returns:
+        y: Output tensor of shape (B, total_dim, L)
+    """
+    if delta_bias is not None:
+        delta = delta + delta_bias.unsqueeze(0).unsqueeze(-1)
+    if delta_softplus:
+        delta = F.softplus(delta)
+
+    B_sz, total_dim, L = u.shape
+    d_state = A.shape[1]
+    G = B.shape[1]
+    D_per_group = total_dim // G
+
+    u_g = u.view(B_sz, G, D_per_group, L)
+    delta_g = delta.view(B_sz, G, D_per_group, L)
+    A_g = A.view(G, D_per_group, d_state)
+
+    # Discretization: dA = exp(delta * A), dB_u = delta * B * u
+    dA = torch.exp(delta_g.unsqueeze(3) * A_g.unsqueeze(0).unsqueeze(-1))  # (B, G, D_g, d_state, L)
+    dB_u = delta_g.unsqueeze(3) * B.unsqueeze(2) * u_g.unsqueeze(3)        # (B, G, D_g, d_state, L)
+
+    # Sequential scan across sequence length L
+    h = torch.zeros(B_sz, G, D_per_group, d_state, device=u.device, dtype=u.dtype)
+    ys = []
+    C_exp = C.unsqueeze(2)  # (B, G, 1, d_state, L)
+    for l in range(L):
+        h = dA[..., l] * h + dB_u[..., l]
+        y_step = torch.sum(h * C_exp[..., l], dim=-1)
+        ys.append(y_step)
+
+    y = torch.stack(ys, dim=-1).view(B_sz, total_dim, L)
+
+    if D is not None:
+        y = y + u * D.unsqueeze(0).unsqueeze(-1)
+
+    if z is not None:
+        y = y * F.silu(z)
+
+    if return_last_state:
+        return y, h
+    return y
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. Axial Depthwise Convolution (AxialDW)
@@ -229,11 +303,10 @@ class SS2D(nn.Module):
                 delta_bias=dt_projs_bias, delta_softplus=True, return_last_state=False
             ).view(B, K, -1, L)
         else:
-            raise RuntimeError(
-                "Official hardware CUDA 'selective_scan_fn' from 'mamba_ssm' is required.\n"
-                "Please run on a CUDA environment with mamba-ssm installed:\n"
-                "  pip install mamba-ssm causal-conv1d"
-            )
+            out_y = selective_scan_pure_pytorch(
+                xs, dts, As, Bs, Cs, Ds, z=None,
+                delta_bias=dt_projs_bias, delta_softplus=True, return_last_state=False
+            ).view(B, K, -1, L)
 
         inv_y = torch.flip(out_y[:, 2:4], dims=[-1]).view(B, 2, -1, L)
         wh_y = torch.transpose(out_y[:, 1].view(B, -1, W, H), dim0=2, dim1=3).contiguous().view(B, -1, L)
