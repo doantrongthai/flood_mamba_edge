@@ -461,3 +461,4 @@ class SelfCalibratedCrossStreamFusion(nn.Module):
         e = self.proj(edge_feat)
         cal = self.calib(body_feat)
         return body_feat * cal + e * (1.0 - cal)
+
