@@ -112,8 +112,7 @@ for ds in DATASETS:
         "--epochs", "1",
         "--batch_size", "2",
         "--model", "{models_list[0]}",
-        "--size", "128",
-        "--quiet"
+        "--size", "128"
     ], check=False)
 print("\\n[OK] All datasets downloaded and verified successfully at 128x128!")"""
 
@@ -173,8 +172,7 @@ for model_name in MODELS_TO_BENCHMARK:
             "--size", str(IMAGE_SIZE),
             "--lr", str(LR),
             "--seed", str(SEED),
-            "--output_path", "outputs",
-            "--quiet"
+            "--output_path", "outputs"
         ]
 
         t0 = time.time()
@@ -184,14 +182,17 @@ for model_name in MODELS_TO_BENCHMARK:
         is_nan = False
 
         for line in proc.stdout:
-            # Check for NaN divergence
-            if "NAN DETECTED" in line or "nan" in line.lower() and "loss" in line.lower():
-                print(f"\\n[WARNING] NaN detected in {{model_name}} on {{ds}}! Skipping to next model immediately.")
+            # Check for NaN divergence in training/validation output
+            if ("train:" in line.lower() or "val:" in line.lower()) and "nan" in line.lower():
+                print(f"\\n[WARNING] NaN loss detected: {{line.strip()}}! Skipping {{model_name}} on {{ds}} immediately.")
                 is_nan = True
                 proc.terminate()
                 break
 
-            # Print clean line (no tqdm carriage returns)
+            # FILTER OUT batch-level tqdm lines to avoid Colab 5,000-line buffer truncation
+            if "%|" in line or "[Train]:" in line or "[Val]:" in line or "it/s" in line or "\\r" in line:
+                continue
+
             sys.stdout.write(line)
             sys.stdout.flush()
             captured_output.append(line)

@@ -126,7 +126,6 @@ def main():
     parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--output_path', type=str, default='outputs')
-    parser.add_argument('--quiet', action='store_true', help='Suppress tqdm progress bars for clean minimal logging')
     parser.add_argument('--download', action='store_true', help="Download dataset automatically if available")
     parser.add_argument('--verify_repro', action='store_true', help="Run strict reproducibility test")
     parser.add_argument('--multiseed', action='store_true', help="Run multi-seed experiment for paper statistics")
@@ -180,8 +179,7 @@ def main():
         epochs=args.epochs, batch_size=args.batch_size, lr=args.lr,
         dataset=args.dataset, output_path=args.output_path,
         seed=args.seed, num_classes=args.num_classes, dataset_type=args.dataset,
-        aux_loss_name=args.aux_loss, aux_weight=args.aux_weight, pretrained=args.pretrained,
-        quiet=args.quiet
+        aux_loss_name=args.aux_loss, aux_weight=args.aux_weight, pretrained=args.pretrained
     )
 
 

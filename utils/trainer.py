@@ -78,8 +78,7 @@ def set_seed(seed):
 
 def train_segmentation(model_name, loss_name, size, epochs, batch_size, lr,
                        dataset, output_path, seed, num_classes=1, dataset_type='floodvn',
-                       aux_loss_name='boundary', aux_weight=0.4, pretrained=False,
-                       quiet=False):
+                       aux_loss_name='boundary', aux_weight=0.4, pretrained=False):
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Device: {device}")
@@ -204,7 +203,7 @@ def train_segmentation(model_name, loss_name, size, epochs, batch_size, lr,
         train_loss = 0.0
 
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Train]",
-                    leave=False, ncols=100, disable=quiet)
+                    leave=False, ncols=100)
 
         for batch_idx, (images, masks) in enumerate(pbar):
             images = images.to(device, non_blocking=False)
@@ -224,10 +223,6 @@ def train_segmentation(model_name, loss_name, size, epochs, batch_size, lr,
             else:
                 loss = criterion(outputs, masks)
 
-            if torch.isnan(loss) or math.isnan(loss.item()):
-                print(f"\n[NAN DETECTED] Training loss exploded to NaN at Epoch {epoch+1}, Batch {batch_idx+1}!")
-                raise FloatingPointError(f"NaN detected during training in model {model_name} at epoch {epoch+1}")
-
             loss.backward()
             optimizer.step()
 
@@ -241,7 +236,7 @@ def train_segmentation(model_name, loss_name, size, epochs, batch_size, lr,
 
         with torch.no_grad():
             for images, masks in tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [Val]",
-                                      leave=False, ncols=100, disable=quiet):
+                                      leave=False, ncols=100):
                 images = images.to(device, non_blocking=False)
                 masks = masks.to(device, non_blocking=False)
 
