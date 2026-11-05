@@ -25,7 +25,7 @@ def make_notebook(family="m11"):
 
     md_header = f"""# Master Benchmark Suite: {title}
 ## Ultra-Low Parameter Footprint (200k-300k Parameters) for Edge AI & Research Paper
-### Target Resolution: $256 \\times 256$ | Evaluated on Satellite (`floodkaggle`) and UAV (`aifloodsense`)
+### Target Resolution: $128 \\times 128$ | Evaluated on Satellite (`floodkaggle`) and UAV (`aifloodsense`)
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/doantrongthai/flood_mamba_edge/blob/main/{nb_filename})
 
@@ -34,7 +34,7 @@ Every model is strictly constrained within **200,000 to 300,000 parameters** and
 
 ### Key Execution Features:
 1. **Official Precompiled Mamba CUDA Kernel**: Instant Tesla T4 kernel setup without slow C++ compiling.
-2. **High-Resolution Paper Training ($256 \\times 256$)**: True full-resolution spatial flood segmentation.
+2. **High-Speed Paper Training ($128 \\times 128$)**: Standard Mamba Edge resolution for real-time edge AI devices.
 3. **Colab 5,000-Line Safe Stream Logging (`--quiet`)**: Filters tqdm batch overhead; outputs clean 1-line-per-epoch summaries to prevent output truncation.
 4. **Instant NaN Skip**: Divergent runs abort immediately upon encountering NaN, instantly advancing to the next architecture to preserve GPU quota.
 5. **Auto-Resume**: Automatically loads completed runs from `{csv_file}` on re-run.
@@ -99,7 +99,7 @@ else:
 !pip install -q tabulate pandas gdown
 print("[OK] Workspace ready at:", os.getcwd())"""
 
-    cell_download = f"""# 4. Verify & Pre-Download Datasets at 256x256
+    cell_download = f"""# 4. Verify & Pre-Download Datasets at 128x128
 import sys, subprocess
 
 DATASETS = ["floodkaggle", "aifloodsense"]
@@ -112,10 +112,10 @@ for ds in DATASETS:
         "--epochs", "1",
         "--batch_size", "2",
         "--model", "{models_list[0]}",
-        "--size", "256",
+        "--size", "128",
         "--quiet"
     ], check=False)
-print("\\n[OK] All datasets downloaded and verified successfully at 256x256!")"""
+print("\\n[OK] All datasets downloaded and verified successfully at 128x128!")"""
 
     cell_loop = f"""# 5. Automated Benchmark Loop with NaN-Safe Skip & Clean 1-Line-Per-Epoch Logging
 import sys, os, re, time, subprocess
@@ -123,7 +123,7 @@ import pandas as pd
 from tabulate import tabulate
 
 SEED = 42
-IMAGE_SIZE = 256
+IMAGE_SIZE = 128
 BATCH_SIZE = 4
 EPOCHS = 100
 LR = 0.001
