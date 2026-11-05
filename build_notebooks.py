@@ -189,11 +189,13 @@ for model_name in MODELS_TO_BENCHMARK:
                 proc.terminate()
                 break
 
-            # FILTER OUT batch-level tqdm lines to avoid Colab 5,000-line buffer truncation
+            # FILTER OUT batch-level tqdm lines and blank lines to avoid Colab 5,000-line buffer truncation
+            if not line.strip():
+                continue
             if "%|" in line or "[Train]:" in line or "[Val]:" in line or "it/s" in line or "\\r" in line:
                 continue
 
-            sys.stdout.write(line)
+            sys.stdout.write(line + "\n" if not line.endswith("\n") else line)
             sys.stdout.flush()
             captured_output.append(line)
 
