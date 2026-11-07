@@ -1,34 +1,13 @@
-try:
-    from mamba_ssm import Mamba as OfficialMamba
-    HAS_MAMBA_SSM = True
-except ImportError:
-    OfficialMamba = None
-    HAS_MAMBA_SSM = False
-
-try:
-    from utils.pscan import pscan
-    HAS_PSCAN = True
-except ImportError:
-    try:
-        from flood_mamba_edge.utils.pscan import pscan
-        HAS_PSCAN = True
-    except ImportError:
-        pscan = None
-        HAS_PSCAN = False
-
 """
 BGFMamba: Boundary-Guided State Space Model for Generalizable Flood Segmentation
 (Formerly MambaEdge / M12_v16)
 
-100% Standalone & Pure PyTorch Native Implementation.
-- Requires NO external libraries (NO mamba_ssm, NO causal_conv1d, NO einops, NO timm).
-- Completely immune to PyTorch version incompatibility issues (PyTorch 2.x / 3.x+).
-- Clean, device-agnostic native selective scan algorithm matching the canonical S6 / mamba-minimal specification.
+Official Hardware-Accelerated Implementation using mamba_ssm (selective_scan_cuda).
 
 Core Architectural Pillars:
 1. Stem & Guidance: OmniASDConv + DifferentiableLaplacianGuidance for contour preservation
 2. Encoder: 4-stage OmniASDBR_Block with scaled bottlenecks
-3. Core SSM: GroupedMambaFusion (GMF) at multi-scale bottleneck
+3. Core SSM: GroupedMambaFusion (GMF) at multi-scale bottleneck powered by selective_scan_cuda
 4. Decoder: MultiDilatedSB_PixelShuffle with spatial boundary gates for sub-pixel edge recovery
 """
 
@@ -38,122 +17,30 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+try:
+    from mamba_ssm import Mamba
+except ImportError:
+    raise ImportError(
+        "BGFMamba requires official hardware-accelerated mamba_ssm (selective_scan_cuda). "
+        "Please ensure mamba_ssm and causal-conv1d CUDA kernels are installed."
+    )
+
 
 # ==============================================================================
-# 1. Pure PyTorch Canonical S6 Mamba Block (Self-Contained, No CUDA wheels needed)
+# 1. 2D Mamba Wrapper powered by Official selective_scan_cuda
 # ==============================================================================
-
-class PurePyTorchMamba(nn.Module):
-    """
-    Pure PyTorch implementation of the Mamba (S6) Selective State Space Model.
-    Follows canonical Algorithm 2 from the Mamba paper (Gu & Dao, 2023) and mamba-minimal.
-    Guarantees seamless execution on all PyTorch versions without compilation errors.
-    """
-    def __init__(
-        self,
-        d_model: int,
-        d_state: int = 8,
-        d_conv: int = 3,
-        expand: int = 1,
-        dt_rank: Optional[int] = None,
-        bias: bool = False,
-        conv_bias: bool = True,
-        **kwargs,
-    ):
-        super().__init__()
-        self.d_model = d_model
-        self.d_state = d_state
-        self.d_conv = d_conv
-        self.expand = expand
-        self.d_inner = int(self.expand * self.d_model)
-        self.dt_rank = math.ceil(self.d_model / 16) if dt_rank is None else dt_rank
-
-        # In-projection splits into SSM path and residual gating path
-        self.in_proj = nn.Linear(self.d_model, self.d_inner * 2, bias=bias)
-
-        # 1D Depthwise Convolution for local sequence context
-        self.conv1d = nn.Conv1d(
-            in_channels=self.d_inner,
-            out_channels=self.d_inner,
-            bias=conv_bias,
-            kernel_size=d_conv,
-            groups=self.d_inner,
-            padding=d_conv - 1,
-        )
-
-        # Input-dependent projections for continuous-to-discrete parameters (Delta, B, C)
-        self.x_proj = nn.Linear(self.d_inner, self.dt_rank + self.d_state * 2, bias=False)
-        self.dt_proj = nn.Linear(self.dt_rank, self.d_inner, bias=True)
-
-        # Continuous state matrix A initialized via HiPPO / S4D real
-        A = torch.arange(1, self.d_state + 1, dtype=torch.float32).repeat(self.d_inner, 1)
-        self.A_log = nn.Parameter(torch.log(A))
-        self.D = nn.Parameter(torch.ones(self.d_inner))
-        self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=bias)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: shape (B, L, D)
-        Returns:
-            out: shape (B, L, D)
-        """
-        B, L, D = x.shape
-        xz = self.in_proj(x)
-        x_proj, z = xz.chunk(2, dim=-1)
-
-        # 1D depthwise convolution across sequence length
-        x_conv = x_proj.transpose(1, 2)
-        x_conv = self.conv1d(x_conv)[:, :, :L]
-        x_conv = F.silu(x_conv).transpose(1, 2)
-
-        # Project inputs to dynamic SSM parameters (dt, B, C)
-        x_dbl = self.x_proj(x_conv)
-        dt, B_ssm, C_ssm = torch.split(x_dbl, [self.dt_rank, self.d_state, self.d_state], dim=-1)
-        dt = F.softplus(self.dt_proj(dt))
-
-        # Discretize continuous state space parameters
-        A = -torch.exp(self.A_log.float())
-        dA = torch.exp(torch.einsum('bld,dn->bldn', dt, A))
-        dB = torch.einsum('bld,bln->bldn', dt, B_ssm)
-
-        BX = dB * x_conv.unsqueeze(-1)
-        if HAS_PSCAN:
-            dA_p = dA.permute(0, 2, 1, 3).contiguous()
-            BX_p = BX.permute(0, 2, 1, 3).contiguous()
-            hs = pscan(dA_p, BX_p).permute(0, 2, 1, 3).contiguous()
-            y = torch.einsum('bldn,bln->bld', hs, C_ssm)
-        else:
-            h = torch.zeros(B, self.d_inner, self.d_state, device=x.device, dtype=x.dtype)
-            ys = []
-            for l in range(L):
-                h = dA[:, l] * h + BX[:, l]
-                y_l = torch.einsum('bdn,bn->bd', h, C_ssm[:, l])
-                ys.append(y_l)
-            y = torch.stack(ys, dim=1)
-
-        # Add skip connection and multiplicative gating
-        y = y + x_conv * self.D
-        y = y * F.silu(z)
-        return self.out_proj(y)
-
 
 class Mamba2D(nn.Module):
     """
     2D spatial wrapper around 1D selective state space model (Mamba).
     Flattens (B, C, H, W) -> (B, H*W, C) for state scan and reconstructs spatial shape.
+    Directly backed by official selective_scan_cuda kernel for peak GPU throughput.
     """
     def __init__(self, d_model: int, d_state: int = 8, d_conv: int = 3, expand: int = 1):
         super().__init__()
         self.d_model = d_model
         self.norm = nn.LayerNorm(d_model)
-        if HAS_MAMBA_SSM and torch.cuda.is_available():
-            try:
-                self.mamba = OfficialMamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
-            except Exception:
-                self.mamba = PurePyTorchMamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
-        else:
-            self.mamba = PurePyTorchMamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+        self.mamba = Mamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
@@ -205,7 +92,7 @@ class OmniASDConv(nn.Module):
         fv = self.dw_v(x)
         fd = self.dw_d(x)
 
-        weights = self.atten(x)  # (B, 3, 1, 1)
+        weights = self.atten(x)
         fused = (
             fh * weights[:, 0:1, :, :] +
             fv * weights[:, 1:2, :, :] +
@@ -425,26 +312,34 @@ class BGFMamba(nn.Module):
         d4 = self.up4(self.dec_conv4(f4), f3)
         d3 = self.up3(self.dec_conv3(d4), f2)
 
-        if self.training:
-            aux_out = self.aux_head(d3)
-            aux_out = F.interpolate(aux_out, size=x.shape[2:], mode='bilinear', align_corners=False)
-        else:
-            aux_out = None
+        aux_out = F.interpolate(self.aux_head(d3), size=x.shape[2:], mode='bilinear', align_corners=False) if self.training else None
 
         d2 = self.up2(self.dec_conv2(d3), x1)
-
         d1 = self.up1_ps(self.up1_conv(d2))
         out = self.final_fuse(torch.cat([d1, x0_guided], dim=1))
 
         if self.training and aux_out is not None:
             return out, aux_out
-
         return out
 
 
-# Backward compatibility alias
 MambaEdge = BGFMamba
 
 
-def build_model(num_classes: int = 1, input_size: int = 128, pretrained: bool = False, in_channels: int = 3, **kwargs):
+def build_model(num_classes=1, input_size=128, pretrained=False, in_channels=3, **kwargs):
     return BGFMamba(in_channels=in_channels, num_classes=num_classes, base_c=20, input_size=input_size)
+
+
+__all__ = [
+    'BGFMamba',
+    'MambaEdge',
+    'build_model',
+    'Mamba2D',
+    'GroupedMambaFusion',
+    'OmniASDConv',
+    'OmniASDBR_Block',
+    'DifferentiableLaplacianGuidance',
+    'MultiDilatedSB_PixelShuffle',
+    '_scaled_bottleneck',
+    '_make_light_fuse',
+]

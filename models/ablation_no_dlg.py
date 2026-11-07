@@ -11,7 +11,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from models.bgfmamba import (
-    PurePyTorchMamba,
     Mamba2D,
     _scaled_bottleneck,
     OmniASDConv,
