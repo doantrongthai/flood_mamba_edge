@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import List
 from models.bgfmamba import (
+    HAS_MAMBA_SSM, OfficialMamba,
     PurePyTorchMamba, _scaled_bottleneck, OmniASDConv, OmniASDBR_Block,
     DifferentiableLaplacianGuidance, MultiDilatedSB_PixelShuffle
 )
@@ -17,8 +18,16 @@ class BidirectionalMamba2D(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.norm = nn.LayerNorm(d_model)
-        self.mamba_fwd = PurePyTorchMamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
-        self.mamba_bwd = PurePyTorchMamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+        if HAS_MAMBA_SSM and torch.cuda.is_available():
+            try:
+                self.mamba_fwd = OfficialMamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+                self.mamba_bwd = OfficialMamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+            except Exception:
+                self.mamba_fwd = PurePyTorchMamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+                self.mamba_bwd = PurePyTorchMamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+        else:
+            self.mamba_fwd = PurePyTorchMamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+            self.mamba_bwd = PurePyTorchMamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape

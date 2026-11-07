@@ -1,3 +1,21 @@
+try:
+    from mamba_ssm import Mamba as OfficialMamba
+    HAS_MAMBA_SSM = True
+except ImportError:
+    OfficialMamba = None
+    HAS_MAMBA_SSM = False
+
+try:
+    from utils.pscan import pscan
+    HAS_PSCAN = True
+except ImportError:
+    try:
+        from flood_mamba_edge.utils.pscan import pscan
+        HAS_PSCAN = True
+    except ImportError:
+        pscan = None
+        HAS_PSCAN = False
+
 """
 BGFMamba: Boundary-Guided State Space Model for Generalizable Flood Segmentation
 (Formerly MambaEdge / M12_v16)
@@ -99,14 +117,20 @@ class PurePyTorchMamba(nn.Module):
         dA = torch.exp(torch.einsum('bld,dn->bldn', dt, A))
         dB = torch.einsum('bld,bln->bldn', dt, B_ssm)
 
-        # Pure PyTorch canonical selective recurrence loop
-        h = torch.zeros(B, self.d_inner, self.d_state, device=x.device, dtype=x.dtype)
-        ys = []
-        for l in range(L):
-            h = dA[:, l] * h + dB[:, l] * x_conv[:, l].unsqueeze(-1)
-            y_l = torch.einsum('bdn,bn->bd', h, C_ssm[:, l])
-            ys.append(y_l)
-        y = torch.stack(ys, dim=1)
+        BX = dB * x_conv.unsqueeze(-1)
+        if HAS_PSCAN:
+            dA_p = dA.permute(0, 2, 1, 3).contiguous()
+            BX_p = BX.permute(0, 2, 1, 3).contiguous()
+            hs = pscan(dA_p, BX_p).permute(0, 2, 1, 3).contiguous()
+            y = torch.einsum('bldn,bln->bld', hs, C_ssm)
+        else:
+            h = torch.zeros(B, self.d_inner, self.d_state, device=x.device, dtype=x.dtype)
+            ys = []
+            for l in range(L):
+                h = dA[:, l] * h + BX[:, l]
+                y_l = torch.einsum('bdn,bn->bd', h, C_ssm[:, l])
+                ys.append(y_l)
+            y = torch.stack(ys, dim=1)
 
         # Add skip connection and multiplicative gating
         y = y + x_conv * self.D
@@ -123,7 +147,13 @@ class Mamba2D(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.norm = nn.LayerNorm(d_model)
-        self.mamba = PurePyTorchMamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+        if HAS_MAMBA_SSM and torch.cuda.is_available():
+            try:
+                self.mamba = OfficialMamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+            except Exception:
+                self.mamba = PurePyTorchMamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+        else:
+            self.mamba = PurePyTorchMamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
