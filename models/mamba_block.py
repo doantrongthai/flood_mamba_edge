@@ -19,6 +19,18 @@ except ImportError:
     OfficialMamba = None
     HAS_MAMBA_SSM = False
 
+try:
+    from utils.assoc_scan import associative_scan, binary_operator
+    HAS_ASSOC_SCAN = True
+except ImportError:
+    try:
+        from flood_mamba_edge.utils.assoc_scan import associative_scan, binary_operator
+        HAS_ASSOC_SCAN = True
+    except ImportError:
+        associative_scan = None
+        binary_operator = None
+        HAS_ASSOC_SCAN = False
+
 
 class PurePyTorchMamba(nn.Module):
     """
@@ -91,13 +103,18 @@ class PurePyTorchMamba(nn.Module):
         dB = torch.einsum('bld,bln->bldn', dt, B_ssm)
 
         # Scan across sequence
-        h = torch.zeros(B, self.d_inner, self.d_state, device=x.device, dtype=x.dtype)
-        ys = []
-        for l in range(L):
-            h = dA[:, l] * h + dB[:, l] * x_conv[:, l].unsqueeze(-1)
-            y_l = torch.einsum('bdn,bn->bd', h, C_ssm[:, l])
-            ys.append(y_l)
-        y = torch.stack(ys, dim=1)  # (B, L, d_inner)
+        if HAS_ASSOC_SCAN:
+            BX = dB * x_conv.unsqueeze(-1)
+            _, hs = associative_scan(binary_operator, (dA, BX))
+            y = torch.einsum('bldn,bln->bld', hs, C_ssm)
+        else:
+            h = torch.zeros(B, self.d_inner, self.d_state, device=x.device, dtype=x.dtype)
+            ys = []
+            for l in range(L):
+                h = dA[:, l] * h + dB[:, l] * x_conv[:, l].unsqueeze(-1)
+                y_l = torch.einsum('bdn,bn->bd', h, C_ssm[:, l])
+                ys.append(y_l)
+            y = torch.stack(ys, dim=1)  # (B, L, d_inner)
         y = y + x_conv * self.D
         y = y * F.silu(z)
         out = self.out_proj(y)

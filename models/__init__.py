@@ -1,3 +1,8 @@
+"""
+Flood Mamba Edge Models Registry
+Provides unified `get_model` dynamic loader for BGFMamba and official baselines.
+"""
+
 import os
 import torch
 import importlib
@@ -5,45 +10,74 @@ import inspect
 
 AUTO_PRETRAINED_MODELS = {'deeplabv3'}
 
+# Mapping variations/hyphens to canonical model filenames
+ALIAS_MAP = {
+    # Proposed Architecture
+    'bgfmamba': 'bgfmamba',
+    'bgf-mamba': 'bgfmamba',
+    'bgf_mamba': 'bgfmamba',
+    'mambaedge': 'bgfmamba',
+    'mamba-edge': 'bgfmamba',
+    'mamba_edge': 'bgfmamba',
 
-def get_model(model_name, num_classes=1, seed=None, input_size=128, pretrained=None):
+    # Mamba Baselines
+    'mambafloodlite': 'mambafloodlite',
+    'mamba_flood_lite': 'mambafloodlite',
+    'mamba-flood-lite': 'mambafloodlite',
+    'hybridseg': 'hybridseg',
+    'hybrid_seg': 'hybridseg',
+    'hybrid-seg': 'hybridseg',
+    'lightm_unet': 'lightm_unet',
+    'lightmunet': 'lightm_unet',
+    'lightm-unet': 'lightm_unet',
+    'ultralight_vmunet': 'ultralight_vmunet',
+    'ultralight': 'ultralight_vmunet',
+    'ultralight-vmunet': 'ultralight_vmunet',
+    'ultralight_vm_unet': 'ultralight_vmunet',
+
+    # Real-Time & Edge CNN Baselines
+    'ulite': 'ulite',
+    'u_lite': 'ulite',
+    'u-lite': 'ulite',
+    'fast_scnn': 'fast_scnn',
+    'fast-scnn': 'fast_scnn',
+    'stdc1': 'stdc1',
+    'stdc': 'stdc1',
+    'edanet': 'edanet',
+    'espnetv2': 'espnetv2',
+    'dabnet': 'dabnet',
+    'enet': 'enet',
+    'segnet': 'segnet',
+    'segformer': 'segformer',
+    'unet': 'unet',
+    'deeplabv3': 'deeplabv3',
+}
+
+
+def list_available_models():
+    """Returns list of canonical baseline and proposed model names."""
+    models_dir = os.path.dirname(__file__)
+    return sorted([
+        f[:-3] for f in os.listdir(models_dir)
+        if f.endswith('.py') and f not in ('__init__.py', 'mamba_block.py', 'mambaedge.py')
+    ])
+
+
+def get_model(model_name: str, num_classes: int = 1, seed: int = None, input_size: int = 128, pretrained: bool = None):
     """
-    Initialize model with deterministic weights.
-    Supports Mamba Edge architectures (MambaFloodLite, LCMamNet, UltraLight VM-UNet, LightM-UNet)
-    and standard real-time baseline models.
+    Initialize model by name directly based on file name or alias.
 
     Args:
-        model_name: Name of model architecture
+        model_name: Name of model architecture (e.g., 'bgfmamba', 'lcmamnet', 'mambafloodlite')
         num_classes: Number of output classes (default 1 for binary flood segmentation)
         seed: Random seed for reproducibility
         input_size: Input image dimension (default: 128)
-        pretrained: Load pretrained backbone weights if supported
+        pretrained: Load pretrained weights if supported
     """
     if input_size % 16 != 0:
         raise ValueError(f"input_size={input_size} must be divisible by 16.")
 
-    alias_map = {
-        'fast-scnn': 'fast_scnn',
-        'u_lite': 'ulite',
-        'u-lite': 'ulite',
-        'stdc': 'stdc1',
-        'ultralight': 'ultralight_vmunet',
-        'ultralight-vmunet': 'ultralight_vmunet',
-        'ultralight_vm_unet': 'ultralight_vmunet',
-        'lightmunet': 'lightm_unet',
-        'lightm-unet': 'lightm_unet',
-        'mamba_flood_lite': 'mambafloodlite',
-        'mamba-flood-lite': 'mambafloodlite',
-        'satreg': 'satreg_cmunet',
-        'satreg-cmunet': 'satreg_cmunet',
-        'satreg_cm_unet': 'satreg_cmunet',
-        'cmunet': 'satreg_cmunet',
-        'cm-unet': 'satreg_cmunet',
-        'cm_unet': 'satreg_cmunet',
-        'hybrid_seg': 'hybridseg',
-        'hybrid-seg': 'hybridseg',
-    }
-    canonical_name = alias_map.get(model_name.lower(), model_name.lower())
+    canonical_name = ALIAS_MAP.get(model_name.lower().strip(), model_name.lower().strip())
 
     if pretrained is None:
         pretrained = canonical_name in AUTO_PRETRAINED_MODELS
@@ -52,14 +86,10 @@ def get_model(model_name, num_classes=1, seed=None, input_size=128, pretrained=N
 
     model_file = os.path.join(os.path.dirname(__file__), f'{canonical_name}.py')
     if not os.path.exists(model_file):
-        available = [
-            f.replace('.py', '')
-            for f in os.listdir(os.path.dirname(__file__))
-            if f.endswith('.py') and f not in ('__init__.py', 'mamba_block.py')
-        ]
+        available = list_available_models()
         raise ValueError(
             f"Model '{model_name}' not found.\n"
-            f"Available: {', '.join(sorted(available))}"
+            f"Available models in models/: {', '.join(available)}"
         )
 
     if seed is not None:
@@ -70,17 +100,15 @@ def get_model(model_name, num_classes=1, seed=None, input_size=128, pretrained=N
 
     module = importlib.import_module(f'models.{canonical_name}')
 
+    if not hasattr(module, 'build_model'):
+        raise AttributeError(f"Module 'models.{canonical_name}' does not implement 'build_model()'")
+
     sig = inspect.signature(module.build_model)
     kwargs = {'num_classes': num_classes}
     if 'input_size' in sig.parameters:
         kwargs['input_size'] = input_size
     if 'pretrained' in sig.parameters:
         kwargs['pretrained'] = pretrained
-    if 'variant' in sig.parameters:
-        if model_name.lower() in ('cmunet', 'cm-unet', 'cm_unet'):
-            kwargs['variant'] = 'cmunet'
-        else:
-            kwargs['variant'] = 'satreg'
 
     model = module.build_model(**kwargs)
 
@@ -89,3 +117,5 @@ def get_model(model_name, num_classes=1, seed=None, input_size=128, pretrained=N
 
     return model
 
+
+__all__ = ['get_model', 'list_available_models', 'ALIAS_MAP']
