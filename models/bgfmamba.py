@@ -1,3 +1,16 @@
+"""
+BGFMamba: Boundary-Guided State Space Model for Generalizable Flood Segmentation
+(Formerly MambaEdge / M12_v16)
+
+Official Hardware-Accelerated Implementation using mamba_ssm (selective_scan_cuda).
+
+Core Architectural Pillars:
+1. Stem & Guidance: OmniASDConv + DifferentiableLaplacianGuidance for contour preservation
+2. Encoder: 4-stage OmniASDBR_Block with scaled bottlenecks
+3. Core SSM: GroupedMambaFusion (GMF) at multi-scale bottleneck powered by selective_scan_cuda
+4. Decoder: MultiDilatedSB_PixelShuffle with spatial boundary gates for sub-pixel edge recovery
+"""
+
 import math
 from typing import Optional, List, Tuple
 import torch
@@ -11,10 +24,19 @@ except ImportError:
 
 
 class Mamba2D(nn.Module):
+    """
+    2D spatial wrapper around selective state space model (Mamba) with Bidirectional Scan.
+    Flattens (B, C, H, W) -> (B, H*W, C) for state scan, performs forward and backward (flipped) scans,
+    and reconstructs spatial shape.
+    Directly backed by official selective_scan_cuda kernel for peak GPU throughput.
+    """
     def __init__(self, d_model: int, d_state: int = 8, d_conv: int = 3, expand: int = 1):
         super().__init__()
         if Mamba is None:
-            raise ImportError("mamba_ssm is required")
+            raise ImportError(
+                "BGFMamba requires official hardware-accelerated mamba_ssm (selective_scan_cuda). "
+                "Please ensure mamba_ssm and causal-conv1d CUDA kernels are installed."
+            )
         self.d_model = d_model
         self.norm = nn.LayerNorm(d_model)
         self.mamba_fwd = Mamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
@@ -33,11 +55,17 @@ class Mamba2D(nn.Module):
 
 
 def _scaled_bottleneck(out_c: int) -> int:
+    """Scaled channel bottleneck from LCMAM family."""
     bottleneck = int(round(out_c * 0.625 / 8.0) * 8)
     return max(16, bottleneck)
 
 
 class OmniASDConv(nn.Module):
+    """
+    Dynamic Omni-Directional Strip Convolution.
+    Captures orthogonal flows (1x3, 3x1) and diagonal/curved flow features (3x3 dilated)
+    with adaptive channel attention gating.
+    """
     def __init__(self, in_c: int, out_c: int, k: int = 3):
         super().__init__()
         self.pw_in = nn.Conv2d(in_c, out_c, kernel_size=1, bias=False) if in_c != out_c else nn.Identity()
@@ -58,136 +86,152 @@ class OmniASDConv(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.pw_in(x)
-        w = self.atten(x)
-        h = self.dw_h(x)
-        v = self.dw_v(x)
-        d = self.dw_d(x)
-        fuse = w[:, 0:1] * h + w[:, 1:2] * v + w[:, 2:3] * d
-        return x + self.pw_out(self.act(self.bn(fuse)))
+        res = x
+        fh = self.dw_h(x)
+        fv = self.dw_v(x)
+        fd = self.dw_d(x)
+
+        weights = self.atten(x)
+        fused = (
+            fh * weights[:, 0:1, :, :] +
+            fv * weights[:, 1:2, :, :] +
+            fd * weights[:, 2:3, :, :]
+        )
+        strip = self.act(self.bn(fused))
+        out = self.pw_out(strip)
+        return out + res
 
 
 class OmniASDBR_Block(nn.Module):
-    def __init__(self, in_c: int, out_c: int, bottleneck: Optional[int] = None, k: int = 3):
+    """Omni-Directional Asymmetric Strip Residual Block."""
+    def __init__(self, in_c: int, out_c: int, bottleneck: int):
         super().__init__()
-        mid = bottleneck if bottleneck is not None else _scaled_bottleneck(out_c)
         self.reduce = nn.Sequential(
-            nn.Conv2d(in_c, mid, kernel_size=1, bias=False),
-            nn.BatchNorm2d(mid),
-            nn.SiLU(inplace=True)
+            nn.Conv2d(in_c, bottleneck, 1, bias=False),
+            nn.BatchNorm2d(bottleneck),
+            nn.SiLU(inplace=True),
         )
-        self.conv1 = OmniASDConv(mid, mid, k=k)
-        self.conv2 = OmniASDConv(mid, mid, k=k)
+        self.conv = OmniASDConv(bottleneck, bottleneck, k=3)
         self.expand = nn.Sequential(
-            nn.Conv2d(mid, out_c, kernel_size=1, bias=False),
-            nn.BatchNorm2d(out_c)
+            nn.Conv2d(bottleneck, out_c, 1, bias=False),
+            nn.BatchNorm2d(out_c),
         )
-        self.shortcut = nn.Sequential(
-            nn.Conv2d(in_c, out_c, kernel_size=1, bias=False),
-            nn.BatchNorm2d(out_c)
-        ) if in_c != out_c else nn.Identity()
+        self.shortcut = nn.Identity() if in_c == out_c else nn.Sequential(
+            nn.Conv2d(in_c, out_c, 1, bias=False),
+            nn.BatchNorm2d(out_c),
+        )
         self.act = nn.SiLU(inplace=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         res = self.shortcut(x)
-        y = self.reduce(x)
-        y = self.conv1(y)
-        y = self.conv2(y)
-        y = self.expand(y)
-        return self.act(res + y)
+        x = self.reduce(x)
+        x = self.conv(x)
+        x = self.expand(x)
+        return self.act(x + res)
 
 
-def _make_light_fuse(in_c: int, skip_c: Optional[int] = None, out_c: Optional[int] = None) -> nn.Sequential:
-    if skip_c is None and out_c is None:
-        dim = in_c
-        return nn.Sequential(
-            nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim, bias=False),
-            nn.BatchNorm2d(dim),
-            nn.SiLU(inplace=True)
-        )
+class GroupedMambaFusion(nn.Module):
+    """
+    Grouped Scale-Aware Mamba Fusion for ultra-low parameter budgets (200k-300k).
+    Splits multi-scale tokens into independent groups for parallel selective scanning.
+    """
+    def __init__(self, in_channels_list: List[int], embed_dim: int = 40, num_groups: int = 2, expand: int = 1):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.num_groups = num_groups
+        self.projs = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(c, embed_dim, kernel_size=1, bias=False),
+                nn.BatchNorm2d(embed_dim)
+            )
+            for c in in_channels_list
+        ])
+        group_dim = embed_dim // num_groups
+        self.mamba_groups = nn.ModuleList([
+            Mamba2D(d_model=group_dim, d_state=8, d_conv=3, expand=expand)
+            for _ in range(num_groups)
+        ])
+        self.out_projs = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(embed_dim, c, kernel_size=1, bias=False),
+                nn.BatchNorm2d(c),
+                nn.SiLU(inplace=True)
+            )
+            for c in in_channels_list
+        ])
+
+    def forward(self, features: List[torch.Tensor]) -> List[torch.Tensor]:
+        orig_shapes = [f.shape[2:] for f in features]
+        target_shape = features[0].shape[2:]
+
+        aligned = []
+        for i, f in enumerate(features):
+            p = self.projs[i](f)
+            if p.shape[2:] != target_shape:
+                p = F.interpolate(p, size=target_shape, mode='bilinear', align_corners=False)
+            aligned.append(p)
+
+        fused = sum(aligned)
+        chunks = torch.chunk(fused, self.num_groups, dim=1)
+        mamba_outs = [self.mamba_groups[g](chunks[g]) for g in range(self.num_groups)]
+        mamba_feat = torch.cat(mamba_outs, dim=1) + fused
+
+        outs = []
+        for i, target_sz in enumerate(orig_shapes):
+            out_f = self.out_projs[i](mamba_feat)
+            if out_f.shape[2:] != target_sz:
+                out_f = F.interpolate(out_f, size=target_sz, mode='bilinear', align_corners=False)
+            outs.append(out_f + features[i])
+        return outs
+
+
+def _make_light_fuse(mid_c: int, skip_c: int, out_c: int) -> nn.Sequential:
+    """Ultra-lightweight depthwise separable fusion block."""
     return nn.Sequential(
-        nn.Conv2d(in_c + skip_c, out_c, kernel_size=3, padding=1, bias=False),
+        nn.Conv2d(mid_c + skip_c, out_c, kernel_size=1, bias=False),
+        nn.BatchNorm2d(out_c),
+        nn.SiLU(inplace=True),
+        nn.Conv2d(out_c, out_c, kernel_size=3, padding=1, groups=out_c, bias=False),
         nn.BatchNorm2d(out_c),
         nn.SiLU(inplace=True)
     )
 
 
-class GroupedMambaFusion(nn.Module):
-    def __init__(self, in_channels: List[int], embed_dim: int = 40, num_groups: int = 2):
-        super().__init__()
-        self.num_groups = num_groups
-        self.embed_dim = embed_dim
-        group_dim = embed_dim // num_groups
-        self.projs = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(c, embed_dim, kernel_size=1, bias=False),
-                nn.BatchNorm2d(embed_dim),
-                nn.SiLU(inplace=True)
-            ) for c in in_channels
-        ])
-        self.mamba_groups = nn.ModuleList([
-            Mamba2D(d_model=group_dim, d_state=8, d_conv=3, expand=1)
-            for _ in range(num_groups)
-        ])
-        self.post_fuse = _make_light_fuse(embed_dim)
-        self.outs = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(embed_dim, c, kernel_size=1, bias=False),
-                nn.BatchNorm2d(c)
-            ) for c in in_channels
-        ])
-
-    def forward(self, feats: List[torch.Tensor]) -> List[torch.Tensor]:
-        target_size = feats[-1].shape[2:]
-        proj_feats = []
-        for i, (f, p) in enumerate(zip(feats, self.projs)):
-            pf = p(f)
-            if pf.shape[2:] != target_size:
-                pf = F.interpolate(pf, size=target_size, mode="bilinear", align_corners=False)
-            proj_feats.append(pf)
-        fused = sum(proj_feats)
-        chunks = torch.chunk(fused, self.num_groups, dim=1)
-        mamba_chunks = [m(c) for m, c in zip(self.mamba_groups, chunks)]
-        fused = torch.cat(mamba_chunks, dim=1)
-        fused = self.post_fuse(fused)
-        outputs = []
-        for orig_f, out_proj in zip(feats, self.outs):
-            out = out_proj(fused)
-            if out.shape[2:] != orig_f.shape[2:]:
-                out = F.interpolate(out, size=orig_f.shape[2:], mode="bilinear", align_corners=False)
-            outputs.append(orig_f + out)
-        return outputs
-
-
 class MultiDilatedSB_PixelShuffle(nn.Module):
+    """
+    Multi-Dilated Spatial Boundary PixelShuffle Decoder Block.
+    Employs dual-rate dilated convolutions to extract fine multi-scale boundary gates
+    and sub-pixel spatial upsampling without bilinear interpolation blur.
+    """
     def __init__(self, in_c: int, skip_c: int, out_c: int):
         super().__init__()
-        self.up_conv = nn.Conv2d(in_c, in_c * 4, kernel_size=1)
+        mid_c = in_c // 4
         self.ps = nn.PixelShuffle(upscale_factor=2)
-        mid = max(8, skip_c // 4)
-        self.d1 = nn.Conv2d(skip_c, mid, kernel_size=3, padding=1, dilation=1, bias=False)
-        self.d2 = nn.Conv2d(skip_c, mid, kernel_size=3, padding=2, dilation=2, bias=False)
-        self.d3 = nn.Conv2d(skip_c, mid, kernel_size=3, padding=3, dilation=3, bias=False)
-        self.bn = nn.BatchNorm2d(mid * 3)
+        k_c = 8
+        self.d1 = nn.Conv2d(skip_c, k_c, kernel_size=3, padding=1, bias=False)
+        self.d2 = nn.Conv2d(skip_c, k_c, kernel_size=3, padding=2, dilation=2, bias=False)
+        self.bn = nn.BatchNorm2d(k_c)
         self.gate = nn.Sequential(
-            nn.Conv2d(mid * 3, 1, kernel_size=1, bias=False),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(k_c, 1, kernel_size=1),
             nn.Sigmoid()
         )
-        self.fuse = nn.Sequential(
-            nn.Conv2d(in_c + skip_c, out_c, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(out_c),
-            nn.SiLU(inplace=True)
-        )
+        self.fuse = _make_light_fuse(mid_c, skip_c, out_c)
 
     def forward(self, x: torch.Tensor, skip: torch.Tensor) -> torch.Tensor:
-        x_up = self.ps(self.up_conv(x))
+        x_up = self.ps(x)
         if x_up.shape[2:] != skip.shape[2:]:
-            x_up = F.interpolate(x_up, size=skip.shape[2:], mode="bilinear", align_corners=False)
-        feat = torch.cat([self.d1(skip), self.d2(skip), self.d3(skip)], dim=1)
+            x_up = F.interpolate(x_up, size=skip.shape[2:], mode='bilinear', align_corners=False)
+        feat = self.d1(skip) + self.d2(skip)
         g = self.gate(self.bn(feat))
         return self.fuse(torch.cat([x_up, skip * (1.0 + g)], dim=1))
 
 
 class BGFMamba(nn.Module):
+    """
+    BGFMamba: Boundary-Guided State Space Model for Generalizable Flood Segmentation.
+    Target: Ultra-Lightweight (~235k parameters) with superior boundary preservation.
+    """
     def __init__(self, in_channels: int = 3, num_classes: int = 1, base_c: int = 20, input_size: int = 128, **kwargs):
         super().__init__()
         c = base_c
@@ -223,6 +267,7 @@ class BGFMamba(nn.Module):
 
     def forward(self, x: torch.Tensor):
         x0 = self.inc(x)
+
         x1 = self.stage1(self.pool(x0))
         x2 = self.stage2(self.pool(x1))
         x3 = self.stage3(self.pool(x2))
@@ -233,7 +278,7 @@ class BGFMamba(nn.Module):
         d4 = self.up4(self.dec_conv4(f4), f3)
         d3 = self.up3(self.dec_conv3(d4), f2)
 
-        aux_out = F.interpolate(self.aux_head(d3), size=x.shape[2:], mode="bilinear", align_corners=False) if self.training else None
+        aux_out = F.interpolate(self.aux_head(d3), size=x.shape[2:], mode='bilinear', align_corners=False) if self.training else None
 
         d2 = self.up2(self.dec_conv2(d3), x1)
         d1 = self.up1_ps(self.up1_conv(d2))
@@ -259,6 +304,7 @@ __all__ = [
     'GroupedMambaFusion',
     'OmniASDConv',
     'OmniASDBR_Block',
+    
     'MultiDilatedSB_PixelShuffle',
     '_scaled_bottleneck',
     '_make_light_fuse',
