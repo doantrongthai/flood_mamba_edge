@@ -1,7 +1,7 @@
 """
-Ablation Study: Bidirectional Mamba Scan (Forward + Backward) vs Unidirectional Raster Scan.
-Journal Hypothesis: Bidirectional scanning allows past and future context aggregation along
-the 1D unrolled sequence, but increases latency and parameter footprint.
+Ablation Study: Unidirectional Mamba Raster Scan vs Proposed Bidirectional Mamba Scan.
+Journal Hypothesis: Unidirectional raster scan restricts state-space context propagation to forward 1D ordering,
+failing to integrate reverse spatial dependencies and leading to boundary and segmentation degradation.
 """
 import torch
 import torch.nn as nn
@@ -13,26 +13,22 @@ from models.bgfmamba import (
     DifferentiableLaplacianGuidance, MultiDilatedSB_PixelShuffle
 )
 
-class BidirectionalMamba2D(nn.Module):
+class UnidirectionalMamba2D(nn.Module):
     def __init__(self, d_model: int, d_state: int = 8, d_conv: int = 3, expand: int = 1):
         super().__init__()
         self.d_model = d_model
         self.norm = nn.LayerNorm(d_model)
-        self.mamba_fwd = Mamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
-        self.mamba_bwd = Mamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+        self.mamba = Mamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
         x_flat = x.permute(0, 2, 3, 1).contiguous().view(B, H * W, C)
         x_norm = self.norm(x_flat)
-        y_fwd = self.mamba_fwd(x_norm)
-        y_bwd = self.mamba_bwd(torch.flip(x_norm, dims=[1]))
-        y_bwd = torch.flip(y_bwd, dims=[1])
-        out = (y_fwd + y_bwd) * 0.5
+        out = self.mamba(x_norm)
         out = out.view(B, H, W, C).permute(0, 3, 1, 2).contiguous()
         return x + out
 
-class GroupedMambaFusion_BiDir(nn.Module):
+class GroupedMambaFusion_UniDir(nn.Module):
     def __init__(self, in_channels_list: List[int], embed_dim: int = 40, num_groups: int = 2):
         super().__init__()
         self.embed_dim = embed_dim
@@ -43,7 +39,7 @@ class GroupedMambaFusion_BiDir(nn.Module):
         ])
         group_dim = embed_dim // num_groups
         self.mamba_groups = nn.ModuleList([
-            BidirectionalMamba2D(d_model=group_dim, d_state=8, d_conv=3, expand=1)
+            UnidirectionalMamba2D(d_model=group_dim, d_state=8, d_conv=3, expand=1)
             for _ in range(num_groups)
         ])
         self.out_projs = nn.ModuleList([
@@ -72,7 +68,7 @@ class GroupedMambaFusion_BiDir(nn.Module):
             outs.append(out_f + features[i])
         return outs
 
-class BGFMamba_BiDirectionalScan(nn.Module):
+class BGFMamba_UniDirectionalScan(nn.Module):
     def __init__(self, in_channels=3, num_classes=1, base_c=20, input_size=128, **kwargs):
         super().__init__()
         c = base_c
@@ -83,7 +79,7 @@ class BGFMamba_BiDirectionalScan(nn.Module):
         self.stage2 = OmniASDBR_Block(c * 2, c * 4, bottleneck=_scaled_bottleneck(c * 4))
         self.stage3 = OmniASDBR_Block(c * 4, c * 8, bottleneck=_scaled_bottleneck(c * 8))
         self.stage4 = OmniASDBR_Block(c * 8, c * 8, bottleneck=_scaled_bottleneck(c * 8))
-        self.mamba_fusion = GroupedMambaFusion_BiDir([c * 4, c * 8, c * 8], embed_dim=40, num_groups=2)
+        self.mamba_fusion = GroupedMambaFusion_UniDir([c * 4, c * 8, c * 8], embed_dim=40, num_groups=2)
         self.dec_conv4 = nn.Conv2d(c * 8, c * 4, kernel_size=1)
         self.up4 = MultiDilatedSB_PixelShuffle(in_c=c * 4, skip_c=c * 8, out_c=c * 4)
         self.dec_conv3 = nn.Conv2d(c * 4, c * 2, kernel_size=1)
@@ -117,4 +113,4 @@ class BGFMamba_BiDirectionalScan(nn.Module):
         return (out, aux_out) if self.training and aux_out is not None else out
 
 def build_model(num_classes=1, input_size=128, pretrained=False, in_channels=3, **kwargs):
-    return BGFMamba_BiDirectionalScan(in_channels=in_channels, num_classes=num_classes, base_c=20, input_size=input_size)
+    return BGFMamba_UniDirectionalScan(in_channels=in_channels, num_classes=num_classes, base_c=20, input_size=input_size)

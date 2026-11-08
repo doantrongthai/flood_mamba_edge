@@ -134,4 +134,4 @@ def create_notebook(model_name, output_path):
 if __name__ == '__main__':
     create_notebook('bgfmamba', r'd:\AI Project\flood_mamba_edge\bgfmamba.ipynb')
     create_notebook('mambaedge', r'd:\AI Project\flood_mamba_edge\mambaedge.ipynb')
-    create_notebook('ablation_mamba_bidirectional', r'd:\AI Project\flood_mamba_edge\ablation.ipynb')
+    create_notebook('ablation_mamba_unidirectional', r'd:\AI Project\flood_mamba_edge\ablation.ipynb')

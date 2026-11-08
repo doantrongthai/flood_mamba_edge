@@ -32,21 +32,26 @@ except ImportError:
 
 class Mamba2D(nn.Module):
     """
-    2D spatial wrapper around 1D selective state space model (Mamba).
-    Flattens (B, C, H, W) -> (B, H*W, C) for state scan and reconstructs spatial shape.
+    2D spatial wrapper around selective state space model (Mamba) with Bidirectional Scan.
+    Flattens (B, C, H, W) -> (B, H*W, C) for state scan, performs forward and backward (flipped) scans,
+    and reconstructs spatial shape.
     Directly backed by official selective_scan_cuda kernel for peak GPU throughput.
     """
     def __init__(self, d_model: int, d_state: int = 8, d_conv: int = 3, expand: int = 1):
         super().__init__()
         self.d_model = d_model
         self.norm = nn.LayerNorm(d_model)
-        self.mamba = Mamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+        self.mamba_fwd = Mamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+        self.mamba_bwd = Mamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
         x_flat = x.permute(0, 2, 3, 1).contiguous().view(B, H * W, C)
         x_norm = self.norm(x_flat)
-        out = self.mamba(x_norm)
+        y_fwd = self.mamba_fwd(x_norm)
+        y_bwd = self.mamba_bwd(torch.flip(x_norm, dims=[1]))
+        y_bwd = torch.flip(y_bwd, dims=[1])
+        out = (y_fwd + y_bwd) * 0.5
         out = out.view(B, H, W, C).permute(0, 3, 1, 2).contiguous()
         return x + out
 
