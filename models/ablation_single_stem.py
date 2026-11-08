@@ -1,7 +1,7 @@
 """
 Ablation Study: Single-Stage Stem vs Dual-Stage Stem Conv.
 Journal Hypothesis: Two consecutive OmniASDConv layers at the stem establish an adequately deep,
-flow-aligned receptive field prior to differential Laplacian edge filtering.
+flow-aligned receptive field for multi-scale feature extraction.
 """
 import torch
 import torch.nn as nn
