@@ -12,7 +12,7 @@ from models.bgfmamba import (
 )
 
 class OmniASDConv_NoGate(nn.Module):
-    def __init__(self, in_c: int, out_c: int, k: int = 7):
+    def __init__(self, in_c: int, out_c: int, k: int = 3):
         super().__init__()
         self.pw_in = nn.Conv2d(in_c, out_c, kernel_size=1, bias=False) if in_c != out_c else nn.Identity()
         self.dw_h = nn.Conv2d(out_c, out_c, kernel_size=(1, k), padding=(0, k // 2), groups=out_c, bias=False)
@@ -33,7 +33,7 @@ class OmniASDBR_Block_NoGate(nn.Module):
     def __init__(self, in_c: int, out_c: int, bottleneck: int):
         super().__init__()
         self.reduce = nn.Sequential(nn.Conv2d(in_c, bottleneck, 1, bias=False), nn.BatchNorm2d(bottleneck), nn.SiLU(inplace=True))
-        self.conv = OmniASDConv_NoGate(bottleneck, bottleneck, k=7)
+        self.conv = OmniASDConv_NoGate(bottleneck, bottleneck, k=3)
         self.expand = nn.Sequential(nn.Conv2d(bottleneck, out_c, 1, bias=False), nn.BatchNorm2d(out_c))
         self.shortcut = nn.Identity() if in_c == out_c else nn.Sequential(nn.Conv2d(in_c, out_c, 1, bias=False), nn.BatchNorm2d(out_c))
         self.act = nn.SiLU(inplace=True)

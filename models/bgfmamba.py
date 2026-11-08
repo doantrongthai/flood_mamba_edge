@@ -69,10 +69,10 @@ def _scaled_bottleneck(out_c: int) -> int:
 class OmniASDConv(nn.Module):
     """
     Dynamic Omni-Directional Strip Convolution.
-    Captures orthogonal flows (1x7, 7x1) and diagonal/curved flow features (3x3 dilated)
+    Captures orthogonal flows (1x3, 3x1) and diagonal/curved flow features (3x3 dilated)
     with adaptive channel attention gating.
     """
-    def __init__(self, in_c: int, out_c: int, k: int = 7):
+    def __init__(self, in_c: int, out_c: int, k: int = 3):
         super().__init__()
         self.pw_in = nn.Conv2d(in_c, out_c, kernel_size=1, bias=False) if in_c != out_c else nn.Identity()
         self.dw_h = nn.Conv2d(out_c, out_c, kernel_size=(1, k), padding=(0, k // 2), groups=out_c, bias=False)
@@ -144,7 +144,7 @@ class OmniASDBR_Block(nn.Module):
             nn.BatchNorm2d(bottleneck),
             nn.SiLU(inplace=True),
         )
-        self.conv = OmniASDConv(bottleneck, bottleneck, k=7)
+        self.conv = OmniASDConv(bottleneck, bottleneck, k=3)
         self.expand = nn.Sequential(
             nn.Conv2d(bottleneck, out_c, 1, bias=False),
             nn.BatchNorm2d(out_c),

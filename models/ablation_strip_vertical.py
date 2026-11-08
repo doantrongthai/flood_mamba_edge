@@ -1,5 +1,5 @@
 """
-Ablation Study: Horizontal Strip Convolution Only (1x7).
+Ablation Study: Horizontal Strip Convolution Only (1x3).
 Journal Hypothesis: Unidirectional horizontal strip convolution lacks vertical flow awareness,
 leading to under-segmentation on north-south waterways and flooded vertical streets.
 """
@@ -13,7 +13,7 @@ from models.bgfmamba import (
 )
 
 class OmniASDConv_VOnly(nn.Module):
-    def __init__(self, in_c: int, out_c: int, k: int = 7):
+    def __init__(self, in_c: int, out_c: int, k: int = 3):
         super().__init__()
         self.pw_in = nn.Conv2d(in_c, out_c, kernel_size=1, bias=False) if in_c != out_c else nn.Identity()
         self.dw_v = nn.Conv2d(out_c, out_c, kernel_size=(k, 1), padding=(k // 2, 0), groups=out_c, bias=False)
@@ -32,7 +32,7 @@ class OmniASDBR_Block_VOnly(nn.Module):
     def __init__(self, in_c: int, out_c: int, bottleneck: int):
         super().__init__()
         self.reduce = nn.Sequential(nn.Conv2d(in_c, bottleneck, 1, bias=False), nn.BatchNorm2d(bottleneck), nn.SiLU(inplace=True))
-        self.conv = OmniASDConv_VOnly(bottleneck, bottleneck, k=7)
+        self.conv = OmniASDConv_VOnly(bottleneck, bottleneck, k=3)
         self.expand = nn.Sequential(nn.Conv2d(bottleneck, out_c, 1, bias=False), nn.BatchNorm2d(out_c))
         self.shortcut = nn.Identity() if in_c == out_c else nn.Sequential(nn.Conv2d(in_c, out_c, 1, bias=False), nn.BatchNorm2d(out_c))
         self.act = nn.SiLU(inplace=True)
