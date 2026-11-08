@@ -8,8 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from models.bgfmamba import (
-    _scaled_bottleneck, DifferentiableLaplacianGuidance,
-    GroupedMambaFusion, MultiDilatedSB_PixelShuffle
+    _scaled_bottleneck, GroupedMambaFusion, MultiDilatedSB_PixelShuffle
 )
 
 class OmniASDConv_HOnly(nn.Module):
@@ -46,7 +45,6 @@ class BGFMamba_StripHorizontal(nn.Module):
         super().__init__()
         c = base_c
         self.inc = nn.Sequential(OmniASDConv_HOnly(in_channels, c), OmniASDConv_HOnly(c, c))
-        self.lap_guidance = DifferentiableLaplacianGuidance(in_channels=c)
         self.pool = nn.MaxPool2d(2, 2)
         self.stage1 = OmniASDBR_Block_HOnly(c, c * 2, bottleneck=_scaled_bottleneck(c * 2))
         self.stage2 = OmniASDBR_Block_HOnly(c * 2, c * 4, bottleneck=_scaled_bottleneck(c * 4))
@@ -71,8 +69,7 @@ class BGFMamba_StripHorizontal(nn.Module):
 
     def forward(self, x: torch.Tensor):
         x0 = self.inc(x)
-        x0_guided = self.lap_guidance(x0)
-        x1 = self.stage1(self.pool(x0_guided))
+        x1 = self.stage1(self.pool(x0))
         x2 = self.stage2(self.pool(x1))
         x3 = self.stage3(self.pool(x2))
         x4 = self.stage4(self.pool(x3))
@@ -82,7 +79,7 @@ class BGFMamba_StripHorizontal(nn.Module):
         aux_out = F.interpolate(self.aux_head(d3), size=x.shape[2:], mode='bilinear', align_corners=False) if self.training else None
         d2 = self.up2(self.dec_conv2(d3), x1)
         d1 = self.up1_ps(self.up1_conv(d2))
-        out = self.final_fuse(torch.cat([d1, x0_guided], dim=1))
+        out = self.final_fuse(torch.cat([d1, x0], dim=1))
         return (out, aux_out) if self.training and aux_out is not None else out
 
 def build_model(num_classes=1, input_size=128, pretrained=False, in_channels=3, **kwargs):

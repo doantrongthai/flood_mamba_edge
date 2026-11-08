@@ -15,7 +15,6 @@ from models.bgfmamba import (
     _scaled_bottleneck,
     OmniASDConv,
     OmniASDBR_Block,
-    DifferentiableLaplacianGuidance,
     GroupedMambaFusion,
     _make_light_fuse
 )
@@ -50,7 +49,6 @@ class BGFMamba_BilinearDecoder(nn.Module):
         super().__init__()
         c = base_c
         self.inc = nn.Sequential(OmniASDConv(in_channels, c), OmniASDConv(c, c))
-        self.lap_guidance = DifferentiableLaplacianGuidance(in_channels=c)
         self.pool = nn.MaxPool2d(2, 2)
 
         self.stage1 = OmniASDBR_Block(c, c * 2, bottleneck=_scaled_bottleneck(c * 2))
@@ -81,9 +79,7 @@ class BGFMamba_BilinearDecoder(nn.Module):
 
     def forward(self, x: torch.Tensor):
         x0 = self.inc(x)
-        x0_guided = self.lap_guidance(x0)
-
-        x1 = self.stage1(self.pool(x0_guided))
+        x1 = self.stage1(self.pool(x0))
         x2 = self.stage2(self.pool(x1))
         x3 = self.stage3(self.pool(x2))
         x4 = self.stage4(self.pool(x3))
@@ -101,8 +97,8 @@ class BGFMamba_BilinearDecoder(nn.Module):
 
         d2 = self.up2(self.dec_conv2(d3), x1)
 
-        d1 = F.interpolate(self.up1_conv(d2), size=x0_guided.shape[2:], mode='bilinear', align_corners=False)
-        out = self.final_fuse(torch.cat([d1, x0_guided], dim=1))
+        d1 = F.interpolate(self.up1_conv(d2), size=x0.shape[2:], mode='bilinear', align_corners=False)
+        out = self.final_fuse(torch.cat([d1, x0], dim=1))
 
         if self.training and aux_out is not None:
             return out, aux_out
