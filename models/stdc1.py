@@ -3,9 +3,6 @@ import torch.nn as nn
 from torch.nn import init
 from torch.nn import functional as F
 
-# =================================================================================
-# PHẦN 1: CÁC LỚP BỔ TRỢ
-# =================================================================================
 def conv3x3(in_channels, out_channels, stride=1, bias=False):
     return nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, 
                      padding=1, bias=bias)
@@ -127,16 +124,11 @@ class LaplacianConv(nn.Module):
         lbl = torch.cat([lbl_1x, lbl_2x, lbl_4x], dim=1)
         return lbl
 
-# =================================================================================
-# PHẦN 2: BASE NETWORK (STDC Model)
-# =================================================================================
 class STDCModel(nn.Module):
-    # ✓ ĐÃ SỬA: Thêm input_size=128
     def __init__(self, num_class=1, n_channel=3, encoder_type='stdc1', use_detail_head=False, use_aux=False, 
                  act_type='relu', input_size=128):
         super(STDCModel, self).__init__()
         
-        # ✓ KIỂM TRA TOÁN HỌC: Mạng downsample 5 lần (stage 1->5 đều có stride=2) -> 2^5 = 32
         if input_size % 32 != 0:
             raise ValueError(f"STDCModel yêu cầu input_size chia hết cho 32. Kích thước {input_size} không hợp lệ.")
 
@@ -218,9 +210,5 @@ class STDCModel(nn.Module):
             return x
 
 
-# =================================================================================
-# PHẦN 3: TEMPLATE BUILD MODEL
-# =================================================================================
-# ✓ ĐÃ SỬA: Hàm build_model nhận thêm input_size
 def build_model(num_classes=1, encoder_type='stdc1', input_size=128):
     return STDCModel(num_class=num_classes, n_channel=3, encoder_type=encoder_type, input_size=input_size)

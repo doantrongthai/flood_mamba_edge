@@ -75,18 +75,15 @@ class SegNetModel(nn.Module):
 
         self.num_classes = num_classes
         
-        # ✓ KIỂM TRA TOÁN HỌC: SegNet có 5 lớp MaxPool (2^5 = 32)
         if input_size % 32 != 0:
             raise ValueError(f"SegNet yêu cầu input_size chia hết cho 32. Kích thước {input_size} sẽ gây lỗi Unpool.")
 
-        # Encoder (following VGG16 architecture)
         self.encoder1 = EncoderBlock(in_channels, 64,  num_convs=2)
         self.encoder2 = EncoderBlock(64,  128, num_convs=2)
         self.encoder3 = EncoderBlock(128, 256, num_convs=3)
         self.encoder4 = EncoderBlock(256, 512, num_convs=3)
         self.encoder5 = EncoderBlock(512, 512, num_convs=3)
 
-        # Decoder (symmetric to encoder)
         self.decoder5 = DecoderBlock(512, 512, num_convs=3)
 
         self.decoder4_convs = nn.Sequential(
@@ -106,17 +103,14 @@ class SegNetModel(nn.Module):
             nn.Conv2d(128,  64, kernel_size=3, padding=1), nn.BatchNorm2d(64),  nn.ReLU(inplace=True),
         )
 
-        # FIX: decoder1 now has 2 convs to match encoder1 (symmetric per paper)
         self.decoder1_conv1 = nn.Sequential(
             nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.BatchNorm2d(64), nn.ReLU(inplace=True),
             nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.BatchNorm2d(64), nn.ReLU(inplace=True),
         )
 
-        # Final output layer — kernel_size=1 per paper
         self.decoder1_conv2 = nn.Conv2d(64, num_classes, kernel_size=1)
 
     def forward(self, x):
-        # Encoder
         x1 = self.encoder1(x)
         x1_pooled, indices1 = F.max_pool2d(x1, kernel_size=2, stride=2, return_indices=True)
 
@@ -132,7 +126,6 @@ class SegNetModel(nn.Module):
         x5 = self.encoder5(x4_pooled)
         x5_pooled, indices5 = F.max_pool2d(x5, kernel_size=2, stride=2, return_indices=True)
 
-        # Decoder
         d5 = _max_unpool(x5_pooled, indices5)
         d5 = self.decoder5(d5)
 

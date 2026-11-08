@@ -26,10 +26,6 @@ except ImportError:
     )
 
 
-# ==============================================================================
-# 1. 2D Mamba Wrapper powered by Official selective_scan_cuda
-# ==============================================================================
-
 class Mamba2D(nn.Module):
     """
     2D spatial wrapper around selective state space model (Mamba) with Bidirectional Scan.
@@ -55,10 +51,6 @@ class Mamba2D(nn.Module):
         out = out.view(B, H, W, C).permute(0, 3, 1, 2).contiguous()
         return x + out
 
-
-# ==============================================================================
-# 2. Auxiliary Primitives: Bottlenecks, Laplacian Guidance, Dilated Gates
-# ==============================================================================
 
 def _scaled_bottleneck(out_c: int) -> int:
     """Scaled channel bottleneck from LCMAM family."""
@@ -259,10 +251,6 @@ class MultiDilatedSB_PixelShuffle(nn.Module):
         g = self.gate(self.bn(feat))
         return self.fuse(torch.cat([x_up, skip * (1.0 + g)], dim=1))
 
-
-# ==============================================================================
-# 3. Full BGFMamba Architecture & Factory Function
-# ==============================================================================
 
 class BGFMamba(nn.Module):
     """

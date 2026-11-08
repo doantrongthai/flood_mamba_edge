@@ -235,7 +235,6 @@ class UltraLight_VM_UNet(nn.Module):
         out1 = F.gelu(F.interpolate(self.dbn5(self.decoder5(out2)), scale_factor=(2, 2), mode='bilinear', align_corners=True))
         out1 = torch.add(out1, t1)
 
-        # Output raw logits
         out0 = F.interpolate(self.final(out1), scale_factor=(2, 2), mode='bilinear', align_corners=True)
         return out0
 

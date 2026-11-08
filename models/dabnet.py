@@ -2,9 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# =========================================================================
-# CÁC LỚP BỔ TRỢ (CƠ BẢN)
-# =========================================================================
 class BNPReLU(nn.Module):
     def __init__(self, nIn):
         super().__init__()
@@ -33,9 +30,6 @@ class Conv(nn.Module):
         return output
 
 
-# =========================================================================
-# MODULE CỐT LÕI CỦA DABNET
-# =========================================================================
 class DABModule(nn.Module):
     """
     Depth-wise Asymmetric Bottleneck Module
@@ -63,11 +57,9 @@ class DABModule(nn.Module):
         output = self.bn_relu_1(input)
         output = self.conv3x3(output)
 
-        # Nhánh 1: Tích chập không đối xứng cơ bản
         br1 = self.dconv3x1(output)
         br1 = self.dconv1x3(br1)
         
-        # Nhánh 2: Tích chập không đối xứng mở rộng (Dilated)
         br2 = self.ddconv3x1(output)
         br2 = self.ddconv1x3(br2)
 
@@ -119,15 +111,10 @@ class InputInjection(nn.Module):
         return input
 
 
-# =========================================================================
-# MẠNG CHÍNH
-# =========================================================================
 class DABNet(nn.Module):
-    # ✓ ĐÃ SỬA: Thêm tham số input_size
     def __init__(self, classes=1, block_1=3, block_2=6, input_size=128):
         super().__init__()
         
-        # ✓ KIỂM TRA TOÁN HỌC: Mạng downsample 3 lần -> 2^3 = 8
         if input_size % 8 != 0:
             raise ValueError(f"DABNet yêu cầu input_size chia hết cho 8. Kích thước {input_size} không hợp lệ.")
 
@@ -137,20 +124,18 @@ class DABNet(nn.Module):
             Conv(32, 32, 3, 1, padding=1, bn_acti=True),
         )
 
-        self.down_1 = InputInjection(1)  # 1/2
-        self.down_2 = InputInjection(2)  # 1/4
-        self.down_3 = InputInjection(3)  # 1/8
+        self.down_1 = InputInjection(1)
+        self.down_2 = InputInjection(2)
+        self.down_3 = InputInjection(3)
 
         self.bn_prelu_1 = BNPReLU(32 + 3)
 
-        # DAB Block 1
         self.downsample_1 = DownSamplingBlock(32 + 3, 64)
         self.DAB_Block_1 = nn.Sequential()
         for i in range(0, block_1):
             self.DAB_Block_1.add_module("DAB_Module_1_" + str(i), DABModule(64, d=2))
         self.bn_prelu_2 = BNPReLU(128 + 3)
 
-        # DAB Block 2
         dilation_block_2 = [4, 4, 8, 8, 16, 16]
         self.downsample_2 = DownSamplingBlock(128 + 3, 128)
         self.DAB_Block_2 = nn.Sequential()
@@ -158,7 +143,6 @@ class DABNet(nn.Module):
             self.DAB_Block_2.add_module("DAB_Module_2_" + str(i), DABModule(128, d=dilation_block_2[i]))
         self.bn_prelu_3 = BNPReLU(256 + 3)
 
-        # Classifier (Nhận 259 channels = 128 (out2) + 128 (out2_0) + 3 (down_3))
         self.classifier = nn.Sequential(Conv(259, classes, 1, 1, padding=0))
 
     def forward(self, input):
@@ -170,12 +154,10 @@ class DABNet(nn.Module):
 
         output0_cat = self.bn_prelu_1(torch.cat([output0, down_1], 1))
 
-        # DAB Block 1
         output1_0 = self.downsample_1(output0_cat)
         output1 = self.DAB_Block_1(output1_0)
         output1_cat = self.bn_prelu_2(torch.cat([output1, output1_0, down_2], 1))
 
-        # DAB Block 2
         output2_0 = self.downsample_2(output1_cat)
         output2 = self.DAB_Block_2(output2_0)
         output2_cat = self.bn_prelu_3(torch.cat([output2, output2_0, down_3], 1))
@@ -186,10 +168,6 @@ class DABNet(nn.Module):
         return out
 
 
-# =========================================================================
-# HÀM BUILD MODEL CHUẨN TEMPLATE
-# =========================================================================
-# ✓ ĐÃ SỬA: Hàm build_model nhận thêm tham số input_size
 def build_model(num_classes=1, input_size=128):
     """
     Khởi tạo mạng DABNet với cấu trúc gốc (3 khối Block 1, 6 khối Block 2)

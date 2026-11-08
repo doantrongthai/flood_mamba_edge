@@ -2,9 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# ==============================================================================
-# 1. RESNET BACKBONE (Với Dilated Convolution cho Output Stride = 16)
-# ==============================================================================
 class Bottleneck(nn.Module):
     expansion = 4
     def __init__(self, inplanes, planes, stride=1, dilation=1, downsample=None):
@@ -88,9 +85,6 @@ class ResNetDilated(nn.Module):
         x = self.layer4(x)
         return x
 
-# ==============================================================================
-# 2. ATROUS SPATIAL PYRAMID POOLING (ASPP)
-# ==============================================================================
 class ASPPConv(nn.Sequential):
     def __init__(self, in_channels, out_channels, dilation):
         modules = [
@@ -120,23 +114,19 @@ class ASPPModule(nn.Module):
         super(ASPPModule, self).__init__()
         modules = []
         
-        # 1. 1x1 Conv
         modules.append(nn.Sequential(
             nn.Conv2d(in_channels, out_channels, 1, bias=False),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True)
         ))
 
-        # 2. Ba nhánh 3x3 Dilated Conv với rates khác nhau
         for rate in atrous_rates:
             modules.append(ASPPConv(in_channels, out_channels, rate))
 
-        # 3. Image Pooling (Global Context)
         modules.append(ASPPPooling(in_channels, out_channels))
 
         self.convs = nn.ModuleList(modules)
 
-        # 4. Chiếu tổng hợp (Project)
         self.project = nn.Sequential(
             nn.Conv2d(len(self.convs) * out_channels, out_channels, 1, bias=False),
             nn.BatchNorm2d(out_channels),
@@ -151,9 +141,6 @@ class ASPPModule(nn.Module):
         res = torch.cat(res, dim=1)
         return self.project(res)
 
-# ==============================================================================
-# 3. DEEPLAB V3 CHÍNH
-# ==============================================================================
 class DeepLabV3Model(nn.Module):
     def __init__(self, num_classes=1, backbone='resnet50', output_stride=16, input_size=128, pretrained=False):
         super(DeepLabV3Model, self).__init__()
@@ -195,9 +182,6 @@ class DeepLabV3Model(nn.Module):
         x = F.interpolate(x, size=size, mode='bilinear', align_corners=True)
         return x
 
-# ==============================================================================
-# 4. TEMPLATE BUILD MODEL
-# ==============================================================================
 def build_model(num_classes=1, input_size=128, pretrained=False):
     """
     Khởi tạo DeepLabV3 chuẩn với backbone ResNet-50.

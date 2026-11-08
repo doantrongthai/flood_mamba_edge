@@ -18,7 +18,6 @@ class BGFMamba_NoBottleneck(nn.Module):
         self.inc = nn.Sequential(OmniASDConv(in_channels, c), OmniASDConv(c, c))
         self.lap_guidance = DifferentiableLaplacianGuidance(in_channels=c)
         self.pool = nn.MaxPool2d(2, 2)
-        # Bottleneck equals full output channels (no compression)
         self.stage1 = OmniASDBR_Block(c, c * 2, bottleneck=c * 2)
         self.stage2 = OmniASDBR_Block(c * 2, c * 4, bottleneck=c * 4)
         self.stage3 = OmniASDBR_Block(c * 4, c * 8, bottleneck=c * 8)

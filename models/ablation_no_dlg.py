@@ -27,7 +27,6 @@ class BGFMamba_NoDLG(nn.Module):
         super().__init__()
         c = base_c
         self.inc = nn.Sequential(OmniASDConv(in_channels, c), OmniASDConv(c, c))
-        # Ablated: No Laplacian guidance, direct identity pass
         self.pool = nn.MaxPool2d(2, 2)
 
         self.stage1 = OmniASDBR_Block(c, c * 2, bottleneck=_scaled_bottleneck(c * 2))
@@ -59,7 +58,6 @@ class BGFMamba_NoDLG(nn.Module):
 
     def forward(self, x: torch.Tensor):
         x0 = self.inc(x)
-        # Direct pass without Laplacian guidance
         x0_guided = x0
 
         x1 = self.stage1(self.pool(x0_guided))

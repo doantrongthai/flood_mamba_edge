@@ -23,7 +23,6 @@ class BGFMamba_MambaG4(nn.Module):
         self.stage2 = OmniASDBR_Block(c * 2, c * 4, bottleneck=_scaled_bottleneck(c * 4))
         self.stage3 = OmniASDBR_Block(c * 4, c * 8, bottleneck=_scaled_bottleneck(c * 8))
         self.stage4 = OmniASDBR_Block(c * 8, c * 8, bottleneck=_scaled_bottleneck(c * 8))
-        # 4 Groups: embed_dim=40 // 4 = 10 per group
         self.mamba_fusion = GroupedMambaFusion([c * 4, c * 8, c * 8], embed_dim=40, num_groups=4)
         self.dec_conv4 = nn.Conv2d(c * 8, c * 4, kernel_size=1)
         self.up4 = MultiDilatedSB_PixelShuffle(in_c=c * 4, skip_c=c * 8, out_c=c * 4)

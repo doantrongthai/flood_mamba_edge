@@ -31,7 +31,6 @@ def run_cross_dataset_evaluation(args):
     if not args.weights or not os.path.exists(args.weights):
         raise FileNotFoundError(f"Checkpoint weights not found: '{args.weights}'")
 
-    # Load model
     model = get_model(args.model, num_classes=args.num_classes, seed=args.seed, input_size=args.size)
     checkpoint = torch.load(args.weights, map_location=device, weights_only=False)
     state_dict = checkpoint.get('model_state_dict', checkpoint)
@@ -131,7 +130,6 @@ def main():
     parser.add_argument('--multiseed', action='store_true', help="Run multi-seed experiment for paper statistics")
     parser.add_argument('--seeds', type=int, nargs='+', default=[42, 123, 456, 789, 2024])
 
-    # Cross-dataset evaluation parameters
     parser.add_argument('--weights', type=str, default=None, help="Checkpoint file path for cross-dataset evaluation")
     parser.add_argument('--source_dataset', type=str, default='floodkaggle')
     parser.add_argument('--target_datasets', type=str, nargs='+', default=['floodkaggle', 'aifloodsense'])
@@ -166,7 +164,6 @@ def main():
         run_multiseed_experiments(args, seeds=args.seeds)
         return
 
-    # Standard single-run training
     print("=" * 70)
     print(f"TRAINING PIPELINE | Mode: Single-Run | Dataset: {args.dataset}")
     print(f"Model: {args.model} (pretrained={args.pretrained}) | Size: {args.size} | Classes: {args.num_classes}")

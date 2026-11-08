@@ -51,7 +51,6 @@ class UpSampling(nn.Module):
 
 
 class UNetModel(nn.Module):
-    # ✓ ĐÃ SỬA: Thêm input_size=128
     def __init__(self, in_channels=3, num_classes=1, features=[64, 128, 256, 512], input_size=128):
         """
         UNet model for segmentation
@@ -68,7 +67,6 @@ class UNetModel(nn.Module):
         
         self.num_classes = num_classes
         
-        # ✓ KIỂM TRA TOÁN HỌC: U-Net có 4 lần downsample (MaxPool2d stride 2) -> 2^4 = 16
         if input_size % 16 != 0:
             raise ValueError(f"UNet yêu cầu input_size chia hết cho 16. Kích thước {input_size} không hợp lệ.")
         
@@ -85,7 +83,6 @@ class UNetModel(nn.Module):
         self.up3 = UpSampling(features[2], features[1])
         self.up4 = UpSampling(features[1], features[0])
         
-        # Output layer with num_classes channels
         self.outc = nn.Conv2d(features[0], num_classes, kernel_size=1)
     
     def forward(self, x):
@@ -101,6 +98,5 @@ class UNetModel(nn.Module):
         x = self.outc(x)
         return x
 
-# ✓ ĐÃ SỬA: Hàm build_model nhận thêm input_size
 def build_model(num_classes=1, input_size=128):
     return UNetModel(in_channels=3, num_classes=num_classes, input_size=input_size)

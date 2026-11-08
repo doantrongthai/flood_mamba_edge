@@ -36,7 +36,6 @@ class BGFMamba_MambaG1(nn.Module):
         self.stage3 = OmniASDBR_Block(c * 4, c * 8, bottleneck=_scaled_bottleneck(c * 8))
         self.stage4 = OmniASDBR_Block(c * 8, c * 8, bottleneck=_scaled_bottleneck(c * 8))
 
-        # Ablated: 1 group (full 40 channels scanned together)
         self.mamba_fusion = GroupedMambaFusion([c * 4, c * 8, c * 8], embed_dim=40, num_groups=1)
 
         self.dec_conv4 = nn.Conv2d(c * 8, c * 4, kernel_size=1)

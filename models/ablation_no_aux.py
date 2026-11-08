@@ -44,7 +44,6 @@ class BGFMamba_NoAux(nn.Module):
         self.dec_conv3 = nn.Conv2d(c * 4, c * 2, kernel_size=1)
         self.up3 = MultiDilatedSB_PixelShuffle(in_c=c * 2, skip_c=c * 4, out_c=c * 2)
 
-        # Ablated: No aux_head
 
         self.dec_conv2 = nn.Conv2d(c * 2, c, kernel_size=1)
         self.up2 = MultiDilatedSB_PixelShuffle(in_c=c, skip_c=c * 2, out_c=c)
@@ -77,7 +76,6 @@ class BGFMamba_NoAux(nn.Module):
         d1 = self.up1_ps(self.up1_conv(d2))
         out = self.final_fuse(torch.cat([d1, x0_guided], dim=1))
 
-        # Always returns single output
         return out
 
 

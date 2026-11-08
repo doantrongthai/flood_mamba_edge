@@ -24,7 +24,6 @@ class BGFMamba_SingleStageMamba(nn.Module):
         self.stage3 = OmniASDBR_Block(c * 4, c * 8, bottleneck=_scaled_bottleneck(c * 8))
         self.stage4 = OmniASDBR_Block(c * 8, c * 8, bottleneck=_scaled_bottleneck(c * 8))
 
-        # Single stage Mamba on C4 only
         self.c4_mamba = Mamba2D(d_model=c * 8, d_state=8, d_conv=3, expand=1)
 
         self.dec_conv4 = nn.Conv2d(c * 8, c * 4, kernel_size=1)
@@ -51,7 +50,6 @@ class BGFMamba_SingleStageMamba(nn.Module):
         x3 = self.stage3(self.pool(x2))
         x4 = self.stage4(self.pool(x3))
 
-        # Only C4 passes through Mamba
         f4 = self.c4_mamba(x4)
         f3 = x3
         f2 = x2

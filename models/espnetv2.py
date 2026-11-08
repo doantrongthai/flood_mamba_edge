@@ -3,9 +3,6 @@ import torch.nn as nn
 from torch.nn import init
 from torch.nn import functional as F
 
-# =================================================================================
-# PHẦN 1: CÁC LỚP BỔ TRỢ (Được gom từ thư mục nn_layers của repo gốc)
-# =================================================================================
 class EfficientPWConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -70,21 +67,17 @@ class DownSampler(nn.Module):
         super().__init__()
         self.eesp = EESP(in_channels + 3, out_channels, stride=2)
     def forward(self, x, x_img):
-        # Input reinforcement: Ghép ảnh gốc đã thu nhỏ vào feature map
         x_img = F.interpolate(x_img, size=x.shape[2:], mode='bilinear', align_corners=True)
         return self.eesp(torch.cat([x, x_img], 1))
 
 
-# =================================================================================
-# PHẦN 2: BASE NETWORK (ImageNet Model)
-# =================================================================================
 class EESPNet(nn.Module):
     def __init__(self, scale=2.0):
         super().__init__()
         self.input_reinforcement = True
         config = [32, 64, 128, 256, 512]
         self.config = [int(c * scale) for c in config]
-        self.config[0] = 32 # Tầng đầu không scale theo thiết kế gốc
+        self.config[0] = 32
         
         self.level1 = nn.Sequential(nn.Conv2d(3, self.config[0], 3, 2, 1, bias=False), nn.BatchNorm2d(self.config[0]), nn.PReLU(self.config[0]))
         self.level2_0 = DownSampler(self.config[0], self.config[1])
@@ -93,51 +86,38 @@ class EESPNet(nn.Module):
         self.level4_0 = DownSampler(self.config[2], self.config[3])
         self.level4 = nn.ModuleList([EESP(self.config[3], self.config[3]) for _ in range(4)])
         
-        # Để tránh lỗi 'del' trong hàm init của Segmentation Network
         self.classifier = nn.Identity()
         self.level5 = nn.Identity()
         self.level5_0 = nn.Identity()
 
 
-# =================================================================================
-# PHẦN 3: ESPNetv2 SEGMENTATION NETWORK
-# =================================================================================
 class ESPNetv2Segmentation(nn.Module):
     '''
     This class defines the ESPNetv2 architecture for Semantic Segmentation.
     '''
-    # ✓ SỬA TẠI ĐÂY: Thêm input_size để tương thích với build_model framework
     def __init__(self, classes=1, dataset='pascal', scale=2.0, input_size=128):
         super().__init__()
         
-        # ✓ KIỂM TRA TOÁN HỌC: Mạng downsample 4 lần (l1, l2_0, l3_0, l4_0) -> 2^4 = 16
         if input_size % 16 != 0:
             raise ValueError(f"ESPNetv2 yêu cầu input_size chia hết cho 16. Kích thước {input_size} không hợp lệ.")
 
-        # =============================================================
-        #                        BASE NETWORK
-        # =============================================================
-        self.base_net = EESPNet(scale=scale) # ImageNet model
+        self.base_net = EESPNet(scale=scale)
         del self.base_net.classifier
         del self.base_net.level5
         del self.base_net.level5_0
         config = self.base_net.config
 
-        #=============================================================
-        #                    SEGMENTATION NETWORK
-        #=============================================================
         dec_feat_dict={
             'pascal': 16,
             'city': 16,
             'coco': 32,
-            'floodvn': 16 # Thêm bộ dữ liệu của chúng ta vào đây
+            'floodvn': 16
         }
         
-        # Xử lý an toàn nếu truyền tên dataset lạ
         base_dec_planes = dec_feat_dict.get(dataset, 16) 
         
         dec_planes = [4*base_dec_planes, 3*base_dec_planes, 2*base_dec_planes, classes]
-        pyr_plane_proj = min(classes // 2 + 1, base_dec_planes) # +1 để tránh loi proj_planes=0 khi classes=1
+        pyr_plane_proj = min(classes // 2 + 1, base_dec_planes)
 
         self.bu_dec_l1 = EfficientPyrPool(in_planes=config[3], proj_planes=pyr_plane_proj, out_planes=dec_planes[0])
         self.bu_dec_l2 = EfficientPyrPool(in_planes=dec_planes[0], proj_planes=pyr_plane_proj, out_planes=dec_planes[1])
@@ -169,45 +149,41 @@ class ESPNetv2Segmentation(nn.Module):
 
     def forward(self, x):
         x_size = (x.size(2), x.size(3))
-        enc_out_l1 = self.base_net.level1(x)  # 112
+        enc_out_l1 = self.base_net.level1(x)
         if not self.base_net.input_reinforcement:
             del x
             x = None
 
-        enc_out_l2 = self.base_net.level2_0(enc_out_l1, x)  # 56
+        enc_out_l2 = self.base_net.level2_0(enc_out_l1, x)
 
-        enc_out_l3_0 = self.base_net.level3_0(enc_out_l2, x)  # down-sample
+        enc_out_l3_0 = self.base_net.level3_0(enc_out_l2, x)
         for i, layer in enumerate(self.base_net.level3):
             if i == 0:
                 enc_out_l3 = layer(enc_out_l3_0)
             else:
                 enc_out_l3 = layer(enc_out_l3)
 
-        enc_out_l4_0 = self.base_net.level4_0(enc_out_l3, x)  # down-sample
+        enc_out_l4_0 = self.base_net.level4_0(enc_out_l3, x)
         for i, layer in enumerate(self.base_net.level4):
             if i == 0:
                 enc_out_l4 = layer(enc_out_l4_0)
             else:
                 enc_out_l4 = layer(enc_out_l4)
 
-        # bottom-up decoding
         bu_out = self.bu_dec_l1(enc_out_l4)
 
-        # Decoding block
         bu_out = self.upsample(bu_out)
         enc_out_l3_proj = self.merge_enc_dec_l2(enc_out_l3)
         bu_out = enc_out_l3_proj + bu_out
         bu_out = self.bu_br_l2(bu_out)
         bu_out = self.bu_dec_l2(bu_out)
 
-        # decoding block
         bu_out = self.upsample(bu_out)
         enc_out_l2_proj = self.merge_enc_dec_l3(enc_out_l2)
         bu_out = enc_out_l2_proj + bu_out
         bu_out = self.bu_br_l3(bu_out)
         bu_out = self.bu_dec_l3(bu_out)
 
-        # decoding block
         bu_out = self.upsample(bu_out)
         enc_out_l1_proj = self.merge_enc_dec_l4(enc_out_l1)
         bu_out = enc_out_l1_proj + bu_out
@@ -217,10 +193,6 @@ class ESPNetv2Segmentation(nn.Module):
         return F.interpolate(bu_out, size=x_size, mode='bilinear', align_corners=True)
 
 
-# =================================================================================
-# PHẦN 4: TEMPLATE BUILD MODEL
-# =================================================================================
-# ✓ SỬA TẠI ĐÂY: Hàm build_model giờ nhận tham số input_size
 def build_model(num_classes=1, input_size=128):
     '''
     Khởi tạo mô hình ESPNetv2 với cấu hình scale s=2.0 

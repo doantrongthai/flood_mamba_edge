@@ -63,7 +63,6 @@ class BGFMamba_MultiAux(nn.Module):
             aux2 = F.interpolate(self.aux_head2(d2), size=x.shape[2:], mode='bilinear', align_corners=False)
             aux3 = F.interpolate(self.aux_head3(d3), size=x.shape[2:], mode='bilinear', align_corners=False)
             aux4 = F.interpolate(self.aux_head4(d4), size=x.shape[2:], mode='bilinear', align_corners=False)
-            # Combine aux into primary aux_out matching trainer signature
             aux_combined = (aux2 + aux3 + aux4) / 3.0
             return out, aux_combined
         return out

@@ -32,10 +32,6 @@ import torch.nn.functional as F
 from models.mamba_block import Mamba
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 1. Structure-Aware Preprocessing (SAP)
-# ─────────────────────────────────────────────────────────────────────────────
-
 class GaussianBlur2D(nn.Module):
     """Depthwise separable Gaussian blur approximation."""
     def __init__(self, kernel_size: int = 5, sigma: float = 3.0, channels: int = 3):
@@ -101,10 +97,6 @@ class SAP(nn.Module):
         return out
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. Structure-Aware Deformable Mamba (SADM Block)
-# ─────────────────────────────────────────────────────────────────────────────
-
 class DeformableSpatialAttention(nn.Module):
     """
     Deformable Spatial Attention Module.
@@ -158,35 +150,26 @@ class SADMBlock(nn.Module):
         B, C, H, W = x.shape
         res = x
 
-        # 1. Deformable Attention Branch
         f_b = self.deformable_attn(x)
 
-        # 2. 4-Directional State Space Scanning in Parallel
         x_hwc = x.permute(0, 2, 3, 1)
         x_norm = self.norm(x_hwc)
 
-        # 4 scanning paths:
-        # 1. Horizontal forward
         u_h = x_norm.reshape(B, H * W, C)
-        # 2. Vertical forward
         u_v = x_norm.transpose(1, 2).reshape(B, H * W, C)
-        # 3. Diagonal backward
         u_d = torch.flip(u_h, dims=[1])
-        # 4. Anti-Diagonal backward
         u_a = torch.flip(u_v, dims=[1])
 
-        # Batch-parallel execution through Mamba (1 vectorized loop over L)
-        u_all = torch.cat([u_h, u_v, u_d, u_a], dim=0)  # (4B, H*W, C)
-        s_all = self.mamba(u_all)  # (4B, H*W, C)
+        u_all = torch.cat([u_h, u_v, u_d, u_a], dim=0)
+        s_all = self.mamba(u_all)
 
         s_h = s_all[0*B:1*B].reshape(B, H, W, C).permute(0, 3, 1, 2)
         s_v = s_all[1*B:2*B].reshape(B, W, H, C).transpose(1, 2).permute(0, 3, 1, 2)
         s_d = torch.flip(s_all[2*B:3*B], dims=[1]).reshape(B, H, W, C).permute(0, 3, 1, 2)
         s_a = torch.flip(s_all[3*B:4*B], dims=[1]).reshape(B, W, H, C).transpose(1, 2).permute(0, 3, 1, 2)
 
-        # 3. Directional Attention Coordination
-        f_cat = torch.cat([s_h, s_v, s_d, s_a], dim=1)  # (B, 4C, H, W)
-        attn_weights = F.softmax(self.coord_conv(f_cat), dim=1)  # (B, 4, H, W)
+        f_cat = torch.cat([s_h, s_v, s_d, s_a], dim=1)
+        attn_weights = F.softmax(self.coord_conv(f_cat), dim=1)
 
         f_d = (
             attn_weights[:, 0:1, :, :] * s_h +
@@ -198,10 +181,6 @@ class SADMBlock(nn.Module):
         f_s = self.out_proj(f_d + f_b) + res
         return f_s
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 3. Multi-Scale Feature Fusion (MSFF Module)
-# ─────────────────────────────────────────────────────────────────────────────
 
 class MSFF(nn.Module):
     """
@@ -250,7 +229,7 @@ class MSFF(nn.Module):
                 aligned.append(conv_f)
 
         f_cat = torch.cat(aligned, dim=1)
-        gates = self.gate_conv(f_cat)  # (B, 4, H_ref, W_ref)
+        gates = self.gate_conv(f_cat)
 
         enhanced = []
         for i, f in enumerate(feats):
@@ -265,10 +244,6 @@ class MSFF(nn.Module):
 
         return enhanced
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 4. Gated UNet Decoder & Full HybridSeg Model
-# ─────────────────────────────────────────────────────────────────────────────
 
 class GatedDecoderBlock(nn.Module):
     """
@@ -329,11 +304,8 @@ class HybridSeg(nn.Module):
         c = base_channels
         self.channels = [c, c * 2, c * 4, c * 8]
 
-        # 1. Structure-Aware Preprocessing
         self.sap = SAP(in_channels=in_channels)
 
-        # 2. SADM Encoder Stages
-        # Stride 4 stem reduces full resolution to /4 (32x32 for 128x128 input)
         self.stem = nn.Sequential(
             nn.Conv2d(in_channels, c, kernel_size=3, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(c),
@@ -354,15 +326,12 @@ class HybridSeg(nn.Module):
 
         self.enc4 = SADMBlock(dim=c * 8, d_state=d_state)
 
-        # 3. Multi-Scale Feature Fusion
         self.msff = MSFF(self.channels)
 
-        # 4. Gated UNet Decoder
         self.dec3 = GatedDecoderBlock(enc_dim=c * 4, dec_dim=c * 8, out_dim=c * 4)
         self.dec2 = GatedDecoderBlock(enc_dim=c * 2, dec_dim=c * 4, out_dim=c * 2)
         self.dec1 = GatedDecoderBlock(enc_dim=c, dec_dim=c * 2, out_dim=c)
 
-        # 5. Output Segmentation Head (4x upsampling from /4 to /1)
         self.head = nn.Sequential(
             nn.Upsample(scale_factor=4, mode='bilinear', align_corners=False),
             nn.Conv2d(c, c, kernel_size=3, padding=1, bias=False),
@@ -372,24 +341,19 @@ class HybridSeg(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Step 1: SAP Preprocessing
         x_pre = self.sap(x)
 
-        # Step 2: SADM Hierarchical Encoding
-        e1 = self.enc1(self.stem(x_pre))      # (B, c, H/4, W/4)
-        e2 = self.enc2(self.down1(e1))         # (B, 2c, H/8, W/8)
-        e3 = self.enc3(self.down2(e2))         # (B, 4c, H/16, W/16)
-        e4 = self.enc4(self.down3(e3))         # (B, 8c, H/32, W/32)
+        e1 = self.enc1(self.stem(x_pre))
+        e2 = self.enc2(self.down1(e1))
+        e3 = self.enc3(self.down2(e2))
+        e4 = self.enc4(self.down3(e3))
 
-        # Step 3: MSFF Cross-Scale Fusion
         f1, f2, f3, f4 = self.msff([e1, e2, e3, e4])
 
-        # Step 4: Gated Decoding
         d3 = self.dec3(f3, f4)
         d2 = self.dec2(f2, d3)
         d1 = self.dec1(f1, d2)
 
-        # Step 5: Final Segmentation Mask
         out = self.head(d1)
         return out
 

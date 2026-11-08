@@ -25,7 +25,6 @@ class OmniASDConv_NoGate(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.pw_in(x)
         res = x
-        # Ablated: Simple unweighted sum instead of softmax attention
         fused = self.dw_h(x) + self.dw_v(x) + self.dw_d(x)
         return self.pw_out(self.act(self.bn(fused))) + res
 

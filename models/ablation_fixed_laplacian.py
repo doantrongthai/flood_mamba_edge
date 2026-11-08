@@ -23,7 +23,6 @@ class FixedLaplacianGuidance(nn.Module):
         B, C, H, W = x.shape
         x_reshaped = x.view(B * C, 1, H, W)
         lap = F.conv2d(x_reshaped, self.lap_kernel, padding=1).view(B, C, H, W)
-        # Direct normalized fixed high-pass addition without learnable projection
         return x + torch.tanh(lap)
 
 class BGFMamba_FixedLaplacian(nn.Module):

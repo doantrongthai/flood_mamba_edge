@@ -16,7 +16,6 @@ class BGFMamba_SingleStem(nn.Module):
     def __init__(self, in_channels=3, num_classes=1, base_c=20, input_size=128, **kwargs):
         super().__init__()
         c = base_c
-        # Single stem conv instead of two
         self.inc = OmniASDConv(in_channels, c)
         self.lap_guidance = DifferentiableLaplacianGuidance(in_channels=c)
         self.pool = nn.MaxPool2d(2, 2)

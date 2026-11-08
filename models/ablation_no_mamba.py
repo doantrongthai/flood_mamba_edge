@@ -32,7 +32,6 @@ class ConvBottleneckFusion(nn.Module):
             )
             for c in in_channels_list
         ])
-        # Replaces Mamba with depthwise dilated convolution
         self.conv_fuse = nn.Sequential(
             nn.Conv2d(embed_dim, embed_dim, kernel_size=3, padding=2, dilation=2, groups=embed_dim, bias=False),
             nn.BatchNorm2d(embed_dim),
@@ -87,7 +86,6 @@ class BGFMamba_NoMamba(nn.Module):
         self.stage3 = OmniASDBR_Block(c * 4, c * 8, bottleneck=_scaled_bottleneck(c * 8))
         self.stage4 = OmniASDBR_Block(c * 8, c * 8, bottleneck=_scaled_bottleneck(c * 8))
 
-        # Ablated: Pure CNN fusion instead of GroupedMambaFusion
         self.mamba_fusion = ConvBottleneckFusion([c * 4, c * 8, c * 8], embed_dim=40)
 
         self.dec_conv4 = nn.Conv2d(c * 8, c * 4, kernel_size=1)

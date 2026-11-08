@@ -27,14 +27,12 @@ class PixelShuffleDirectSkip(nn.Module):
         super().__init__()
         mid_c = in_c // 4
         self.ps = nn.PixelShuffle(upscale_factor=2)
-        # Ablated: No boundary convolution or sigmoid gating
         self.fuse = _make_light_fuse(mid_c, skip_c, out_c)
 
     def forward(self, x: torch.Tensor, skip: torch.Tensor) -> torch.Tensor:
         x_up = self.ps(x)
         if x_up.shape[2:] != skip.shape[2:]:
             x_up = F.interpolate(x_up, size=skip.shape[2:], mode='bilinear', align_corners=False)
-        # Direct concatenation without boundary gating
         return self.fuse(torch.cat([x_up, skip], dim=1))
 
 

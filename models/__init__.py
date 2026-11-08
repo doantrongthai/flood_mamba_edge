@@ -10,14 +10,11 @@ import inspect
 
 AUTO_PRETRAINED_MODELS = {'deeplabv3'}
 
-# Mapping variations/hyphens to canonical model filenames
 ALIAS_MAP = {
-    # Proposed Architecture
     'bgfmamba': 'bgfmamba',
     'bgf-mamba': 'bgfmamba',
     'bgf_mamba': 'bgfmamba',
 
-    # Mamba Baselines
     'mambafloodlite': 'mambafloodlite',
     'mamba_flood_lite': 'mambafloodlite',
     'mamba-flood-lite': 'mambafloodlite',
@@ -32,7 +29,6 @@ ALIAS_MAP = {
     'ultralight-vmunet': 'ultralight_vmunet',
     'ultralight_vm_unet': 'ultralight_vmunet',
 
-    # Real-Time & Edge CNN Baselines
     'ulite': 'ulite',
     'u_lite': 'ulite',
     'u-lite': 'ulite',

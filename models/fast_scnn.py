@@ -52,11 +52,8 @@ class LinearBottleneck(nn.Module):
         super(LinearBottleneck, self).__init__()
         self.use_shortcut = stride == 1 and in_channels == out_channels
         self.block = nn.Sequential(
-            # pw
             _ConvBNReLU(in_channels, in_channels * t, 1),
-            # dw
             _DWConv(in_channels * t, in_channels * t, stride),
-            # pw-linear
             nn.Conv2d(in_channels * t, out_channels, 1, bias=False),
             nn.BatchNorm2d(out_channels)
         )
@@ -79,11 +76,10 @@ class PyramidPooling(nn.Module):
         self.conv4 = _ConvBNReLU(in_channels, inter_channels, 1, **kwargs)
         self.out = _ConvBNReLU(in_channels * 2, out_channels, 1)
 
-        # Pool sizes for feature pyramid
         if input_size == 128:
             self.pool_sizes = (1, 2, 3, 4)
         else:
-            self.pool_sizes = (1, 2, 3, 6) # Original paper sizes
+            self.pool_sizes = (1, 2, 3, 6)
         self.pools = nn.ModuleList([nn.AdaptiveAvgPool2d(s) for s in self.pool_sizes])
 
     def upsample(self, x, size):
@@ -124,7 +120,6 @@ class GlobalFeatureExtractor(nn.Module):
         self.bottleneck2 = self._make_layer(LinearBottleneck, block_channels[0], block_channels[1], num_blocks[1], t, 2)
         self.bottleneck3 = self._make_layer(LinearBottleneck, block_channels[1], block_channels[2], num_blocks[2], t, 1)
         
-        # Truyền input_size vào PyramidPooling
         self.ppm = PyramidPooling(block_channels[2], out_channels, input_size=input_size)
 
     def _make_layer(self, block, inplanes, planes, blocks, t=6, stride=1):
@@ -192,7 +187,6 @@ class FastSCNN(nn.Module):
         self.aux = aux
         self.learning_to_downsample = LearningToDownsample(32, 48, 64)
         
-        # Truyền input_size vào GlobalFeatureExtractor
         self.global_feature_extractor = GlobalFeatureExtractor(64, [64, 96, 128], 128, 6, [3, 3, 3], input_size=input_size)
         
         self.feature_fusion = FeatureFusionModule(64, 128, 128)

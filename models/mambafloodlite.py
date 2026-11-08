@@ -29,9 +29,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Optional Fast-Path & Fallback Imports
-# ─────────────────────────────────────────────────────────────────────────────
 
 try:
     from timm.layers import DropPath
@@ -58,10 +55,6 @@ except ImportError:
     selective_scan_fn = None
     HAS_MAMBA_SSM = False
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Pure PyTorch Selective Scan Implementation
-# ─────────────────────────────────────────────────────────────────────────────
 
 def selective_scan_pure_pytorch(
     u: torch.Tensor,
@@ -108,14 +101,12 @@ def selective_scan_pure_pytorch(
     delta_g = delta.view(B_sz, G, D_per_group, L)
     A_g = A.view(G, D_per_group, d_state)
 
-    # Discretization: dA = exp(delta * A), dB_u = delta * B * u
-    dA = torch.exp(delta_g.unsqueeze(3) * A_g.unsqueeze(0).unsqueeze(-1))  # (B, G, D_g, d_state, L)
-    dB_u = delta_g.unsqueeze(3) * B.unsqueeze(2) * u_g.unsqueeze(3)        # (B, G, D_g, d_state, L)
+    dA = torch.exp(delta_g.unsqueeze(3) * A_g.unsqueeze(0).unsqueeze(-1))
+    dB_u = delta_g.unsqueeze(3) * B.unsqueeze(2) * u_g.unsqueeze(3)
 
-    # Sequential scan across sequence length L
     h = torch.zeros(B_sz, G, D_per_group, d_state, device=u.device, dtype=u.dtype)
     ys = []
-    C_exp = C.unsqueeze(2)  # (B, G, 1, d_state, L)
+    C_exp = C.unsqueeze(2)
     for l in range(L):
         h = dA[..., l] * h + dB_u[..., l]
         y_step = torch.sum(h * C_exp[..., l], dim=-1)
@@ -134,10 +125,6 @@ def selective_scan_pure_pytorch(
     return y
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 1. Axial Depthwise Convolution (AxialDW)
-# ─────────────────────────────────────────────────────────────────────────────
-
 class AxialDW(nn.Module):
     """
     Axial Depthwise Convolution: decomposes 2D depthwise convolution
@@ -152,10 +139,6 @@ class AxialDW(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return x + self.dw_h(x) + self.dw_w(x)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. 2D Selective Scan Module (SS2D) & Visual State Space Block (VSSBlock)
-# ─────────────────────────────────────────────────────────────────────────────
 
 class SS2D(nn.Module):
     """
@@ -277,7 +260,6 @@ class SS2D(nn.Module):
         L = H * W
         K = 4
 
-        # 4 scanning trajectories: H-W forward, W-H forward, H-W backward, W-H backward
         x_hwwh = torch.stack([
             x.view(B, -1, L),
             torch.transpose(x, dim0=2, dim1=3).contiguous().view(B, -1, L)
@@ -296,7 +278,6 @@ class SS2D(nn.Module):
         As = -torch.exp(self.A_logs.float()).view(-1, self.d_state)
         dt_projs_bias = self.dt_projs_bias.float().view(-1)
 
-        # Automatic acceleration: native CUDA kernel if mamba-ssm is available on CUDA, otherwise pure PyTorch
         if HAS_MAMBA_SSM and selective_scan_fn is not None and xs.is_cuda:
             out_y = selective_scan_fn(
                 xs, dts, As, Bs, Cs, Ds, z=None,
@@ -384,10 +365,6 @@ class DualVSSBlock(nn.Module):
         return out
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 3. Triple-Branch Encoder Block
-# ─────────────────────────────────────────────────────────────────────────────
-
 class TripleBranchEncoderBlock(nn.Module):
     """
     Triple-Branch Encoder Block:
@@ -399,25 +376,21 @@ class TripleBranchEncoderBlock(nn.Module):
     def __init__(self, in_c: int, out_c: int, kernel_size: int = 3):
         super().__init__()
 
-        # Branch 1: Local Axial Depthwise
         self.branch1_axial = AxialDW(dim=in_c, mixer_kernel=(kernel_size, kernel_size))
         self.branch1_pw = nn.Conv2d(in_c, in_c, kernel_size=1, bias=False)
         self.branch1_bn = nn.BatchNorm2d(in_c)
         self.branch1_relu = nn.ReLU(inplace=True)
 
-        # Branch 2: Axial Depthwise + Dual VSS (Mamba)
         self.branch2_axial = AxialDW(dim=in_c, mixer_kernel=(kernel_size, kernel_size))
         self.branch2_pw = nn.Conv2d(in_c, in_c, kernel_size=1, bias=False)
         self.branch2_bn = nn.BatchNorm2d(in_c)
         self.branch2_relu = nn.ReLU(inplace=True)
         self.branch2_vss = DualVSSBlock(hidden_dim=in_c, d_state=8)
 
-        # Branch 3: Global Context Pooling Attention
         self.branch3_avgpool = nn.AdaptiveAvgPool2d(1)
         self.branch3_dw = nn.Conv2d(in_c, in_c, kernel_size=3, padding=1, groups=in_c, bias=False)
         self.branch3_sigmoid = nn.Sigmoid()
 
-        # Multi-branch fusion & downsampling
         self.channel_adjust = nn.Sequential(
             nn.Conv2d(in_c * 3, out_c, kernel_size=1, bias=False),
             nn.BatchNorm2d(out_c),
@@ -442,10 +415,6 @@ class TripleBranchEncoderBlock(nn.Module):
         x_down = self.pool(skip)
         return x_down, skip
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 4. Efficient Expanded Spatial Pyramid (EESP) Bottleneck
-# ─────────────────────────────────────────────────────────────────────────────
 
 class EESP(nn.Module):
     """Efficient Expanded Spatial Pyramid unit with hierarchical feature fusion."""
@@ -524,10 +493,6 @@ class EESPBottleneck(nn.Module):
         return x
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 5. Decoder Block
-# ─────────────────────────────────────────────────────────────────────────────
-
 class DecoderBlock(nn.Module):
     """Lightweight Decoder Block with Bilinear Upsampling and Pointwise Convolutions."""
     def __init__(self, in_c: int, skip_c: int, out_c: int, reduction: int = 2, kernel_size: int = 3):
@@ -550,10 +515,6 @@ class DecoderBlock(nn.Module):
         return x
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 6. Complete MambaFloodLite Model
-# ─────────────────────────────────────────────────────────────────────────────
-
 class MambaFloodLite(nn.Module):
     """
     MambaFloodLite: A Low-Parameter Mamba-Based Network for Flood Area Segmentation.
@@ -563,25 +524,20 @@ class MambaFloodLite(nn.Module):
         super().__init__()
         self.num_classes = num_classes
 
-        # Initial stem convolution
         self.initial_conv = nn.Conv2d(in_channels, 16, kernel_size=1, bias=False)
 
-        # 4-stage encoder
         self.e1 = TripleBranchEncoderBlock(16, 16, kernel_size=3)
         self.e2 = TripleBranchEncoderBlock(16, 32, kernel_size=3)
         self.e3 = TripleBranchEncoderBlock(32, 64, kernel_size=3)
         self.e4 = TripleBranchEncoderBlock(64, 128, kernel_size=3)
 
-        # Bottleneck
         self.bottleneck = EESPBottleneck(128, 256, num_blocks=1, branches=4)
 
-        # 4-stage decoder
         self.d4 = DecoderBlock(256, 128, 128)
         self.d3 = DecoderBlock(128,  64,  64)
         self.d2 = DecoderBlock( 64,  32,  32)
         self.d1 = DecoderBlock( 32,  16,  16)
 
-        # Multi-scale deep supervision / prediction heads
         self.reduce4 = nn.Conv2d(128, num_classes, kernel_size=1)
         self.reduce3 = nn.Conv2d( 64, num_classes, kernel_size=1)
         self.reduce2 = nn.Conv2d( 32, num_classes, kernel_size=1)
@@ -592,22 +548,18 @@ class MambaFloodLite(nn.Module):
         _, _, H, W = x.shape
         x = self.initial_conv(x)
 
-        # Encoder forward pass
         x, skip1 = self.e1(x)
         x, skip2 = self.e2(x)
         x, skip3 = self.e3(x)
         x, skip4 = self.e4(x)
 
-        # Bottleneck
         x = self.bottleneck(x)
 
-        # Decoder forward pass
         d4 = self.d4(x,  skip4)
         d3 = self.d3(d4, skip3)
         d2 = self.d2(d3, skip2)
         d1 = self.d1(d2, skip1)
 
-        # Multi-scale feature aggregation
         out4 = F.interpolate(self.reduce4(d4), size=(H, W), mode='bilinear', align_corners=False)
         out3 = F.interpolate(self.reduce3(d3), size=(H, W), mode='bilinear', align_corners=False)
         out2 = F.interpolate(self.reduce2(d2), size=(H, W), mode='bilinear', align_corners=False)
@@ -616,7 +568,6 @@ class MambaFloodLite(nn.Module):
         return self.out(torch.cat([out1, out2, out3, out4], dim=1))
 
 
-# Compatibility alias
 MambaUNet = MambaFloodLite
 
 
@@ -624,10 +575,6 @@ def build_model(num_classes: int = 1, in_channels: int = 3, input_size: int = 12
     """Builder function for MambaFloodLite model."""
     return MambaFloodLite(in_channels=in_channels, num_classes=num_classes)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Self-Check / Verification Routine
-# ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
     print("=" * 70)

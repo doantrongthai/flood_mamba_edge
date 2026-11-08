@@ -38,7 +38,6 @@ class MultiDilatedSB_Bilinear(nn.Module):
         self.fuse = _make_light_fuse(mid_c, skip_c, out_c)
 
     def forward(self, x: torch.Tensor, skip: torch.Tensor) -> torch.Tensor:
-        # Ablated: Bilinear upsampling instead of PixelShuffle
         x_up = F.interpolate(x, size=skip.shape[2:], mode='bilinear', align_corners=False)
         feat = self.d1(skip) + self.d2(skip)
         g = self.gate(self.bn(feat))
@@ -61,7 +60,6 @@ class BGFMamba_BilinearDecoder(nn.Module):
 
         self.mamba_fusion = GroupedMambaFusion([c * 4, c * 8, c * 8], embed_dim=40, num_groups=2)
 
-        # Decoder with Bilinear interpolation
         self.dec_conv4 = nn.Conv2d(c * 8, c * 4, kernel_size=1)
         self.up4 = MultiDilatedSB_Bilinear(in_c=c * 4, skip_c=c * 8, out_c=c * 4)
 

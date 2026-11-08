@@ -28,7 +28,6 @@ class SingleDilatedSB_PixelShuffle(nn.Module):
         mid_c = in_c // 4
         self.ps = nn.PixelShuffle(upscale_factor=2)
         k_c = 8
-        # Ablated: Only d1 (dilation=1), no d2 (dilation=2)
         self.d1 = nn.Conv2d(skip_c, k_c, kernel_size=3, padding=1, bias=False)
         self.bn = nn.BatchNorm2d(k_c)
         self.gate = nn.Sequential(
@@ -42,7 +41,6 @@ class SingleDilatedSB_PixelShuffle(nn.Module):
         x_up = self.ps(x)
         if x_up.shape[2:] != skip.shape[2:]:
             x_up = F.interpolate(x_up, size=skip.shape[2:], mode='bilinear', align_corners=False)
-        # Single dilation only
         feat = self.d1(skip)
         g = self.gate(self.bn(feat))
         return self.fuse(torch.cat([x_up, skip * (1.0 + g)], dim=1))

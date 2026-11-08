@@ -143,7 +143,6 @@ class LinearMLP(nn.Module):
 
 
 class SegFormerModel(nn.Module):
-    # ✓ ĐÃ SỬA: Đổi img_size thành input_size để khớp chuẩn project
     def __init__(self, in_channels=3, num_classes=1,
                  embed_dims=[64, 128, 320, 512],
                  num_heads=[1, 2, 5, 8],
@@ -158,7 +157,6 @@ class SegFormerModel(nn.Module):
 
         self.num_classes = num_classes
         
-        # ✓ KIỂM TRA TOÁN HỌC: Mạng downsample 4 lần (stride = 4, 2, 2, 2 -> 32)
         if input_size % 32 != 0:
             raise ValueError(f"SegFormer yêu cầu input_size chia hết cho 32. Kích thước {input_size} không hợp lệ.")
 
@@ -256,7 +254,6 @@ class SegFormerModel(nn.Module):
 
         return x
 
-# ✓ ĐÃ SỬA: Hàm build_model nhận thêm input_size
 def build_model(num_classes=1, input_size=128):
     return SegFormerModel(
         in_channels=3,
