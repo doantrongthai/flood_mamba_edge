@@ -227,7 +227,7 @@ def main():
     parser.add_argument('--weights',         type=str, default=None,             help="Path to single trained .pth weights (optional)")
     parser.add_argument('--seeds',           type=int, nargs='+', default=None,  help="List of seeds for multi-seed evaluation (e.g. 42 123 456 789 2024)")
     parser.add_argument('--source_dataset',  type=str, default='floodkaggle',    help="Source domain used in training")
-    parser.add_argument('--target_datasets', type=str, nargs='+', default=['floodkaggle', 'aifloodsense', 'floodvn'],
+    parser.add_argument('--target_datasets', type=str, nargs='+', default=['floodkaggle', 'floodvn'],
                         help="List of target datasets to evaluate on")
     parser.add_argument('--size',            type=int, default=128,              help="Input dimension")
     parser.add_argument('--batch_size',      type=int, default=4)
