@@ -16,11 +16,6 @@ ALIAS_MAP = {
     'bgfmamba': 'bgfmamba',
     'bgf-mamba': 'bgfmamba',
     'bgf_mamba': 'bgfmamba',
-    'mambaedge': 'bgfmamba',
-    'mamba-edge': 'bgfmamba',
-    'mamba_edge': 'bgfmamba',
-    'ablation_mamba_bidirectional': 'bgfmamba',
-    'ablation-mamba-bidirectional': 'bgfmamba',
 
     # Mamba Baselines
     'mambafloodlite': 'mambafloodlite',

@@ -12,12 +12,18 @@ from utils.metrics import calculate_all_metrics
 
 def find_checkpoint(model_name, loss_name, source_dataset, seed, weights_dir='outputs'):
     clean_loss = loss_name.lower().replace('-', '_')
-    candidates = [
-        os.path.join(weights_dir, f"seed_{seed}", f"{model_name}_{clean_loss}_{source_dataset}_s{seed}.pth"),
-        os.path.join(weights_dir, f"{model_name}_{clean_loss}_{source_dataset}_s{seed}.pth"),
-        os.path.join(weights_dir, f"seed_{seed}", f"{model_name}_{loss_name}_{source_dataset}_s{seed}.pth"),
-        os.path.join(weights_dir, f"{model_name}_{loss_name}_{source_dataset}_s{seed}.pth"),
-    ]
+    names_to_try = [model_name]
+    if model_name == 'bgfmamba':
+        names_to_try.extend(['ablation_mamba_bidirectional', 'mambaedge'])
+
+    candidates = []
+    for m in names_to_try:
+        candidates.extend([
+            os.path.join(weights_dir, f"seed_{seed}", f"{m}_{clean_loss}_{source_dataset}_s{seed}.pth"),
+            os.path.join(weights_dir, f"{m}_{clean_loss}_{source_dataset}_s{seed}.pth"),
+            os.path.join(weights_dir, f"seed_{seed}", f"{m}_{loss_name}_{source_dataset}_s{seed}.pth"),
+            os.path.join(weights_dir, f"{m}_{loss_name}_{source_dataset}_s{seed}.pth"),
+        ])
     for c in candidates:
         if os.path.exists(c):
             return c
