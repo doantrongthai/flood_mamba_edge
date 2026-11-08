@@ -1,0 +1,137 @@
+import json
+
+def create_notebook(model_name, output_path):
+    cells = []
+    
+    c0 = [
+        '!pip install -q einops\n',
+        '!wget -q https://huggingface.co/datasets/doantrongthai/mamba_package/resolve/main/pack_colab_torch2_14.zip -O /content/pack_colab_torch2_14.zip\n',
+        '!unzip -q -o /content/pack_colab_torch2_14.zip -d /\n',
+        '\n',
+        'import torch\n',
+        'import selective_scan_cuda\n',
+        'from mamba_ssm import Mamba\n',
+        '\n',
+        'layer = Mamba(d_model=64).cuda()\n',
+        'x = torch.randn(2, 16, 64, device="cuda")\n',
+        'out = layer(x)\n',
+        'print("SUCCESS:", out.shape)\n'
+    ]
+    cells.append({'cell_type': 'code', 'execution_count': None, 'metadata': {}, 'outputs': [], 'source': c0})
+    
+    c1 = [
+        f'MODEL_NAME = "{model_name}"\n',
+        'SEEDS = [42, 123, 456, 789, 2024]\n',
+        'REP_SEED = 42\n',
+        'EPOCHS = 100\n',
+        'BATCH_SIZE = 4\n',
+        'IMAGE_SIZE = 128\n',
+        'LR = 0.001\n',
+        'LOSS_NAME = "lovasz_focal"\n',
+        'NUM_CLASSES = 1\n'
+    ]
+    cells.append({'cell_type': 'code', 'execution_count': None, 'metadata': {}, 'outputs': [], 'source': c1})
+    
+    c2 = [
+        'import os\n',
+        'if not os.getcwd().endswith("flood_mamba_edge"):\n',
+        '    if not os.path.exists("flood_mamba_edge"):\n',
+        '        !git clone https://github.com/doantrongthai/flood_mamba_edge.git\n',
+        '    %cd flood_mamba_edge\n',
+        '!pip install -q -r requirements.txt\n',
+        '!pip install -q tabulate gdown pandas\n'
+    ]
+    cells.append({'cell_type': 'code', 'execution_count': None, 'metadata': {}, 'outputs': [], 'source': c2})
+    
+    c3 = [
+        'import os\n',
+        'AUTO_PRETRAINED_MODELS = {"deeplabv3"}\n',
+        'IS_PRETRAINED = MODEL_NAME.lower() in AUTO_PRETRAINED_MODELS\n',
+        'PRETRAINED_FLAG = "--pretrained" if IS_PRETRAINED else ""\n',
+        'SEEDS_STR = " ".join(map(str, SEEDS))\n',
+        'def get_checkpoint_path(model, loss, dataset, seed):\n',
+        '    clean_loss = loss.lower().replace("-", "_")\n',
+        '    candidates = [\n',
+        '        f"outputs/seed_{seed}/{model}_{clean_loss}_{dataset}_s{seed}.pth",\n',
+        '        f"outputs/{model}_{clean_loss}_{dataset}_s{seed}.pth",\n',
+        '        f"outputs/seed_{seed}/{model}_{loss}_{dataset}_s{seed}.pth",\n',
+        '        f"outputs/{model}_{loss}_{dataset}_s{seed}.pth"\n',
+        '    ]\n',
+        '    for c in candidates:\n',
+        '        if os.path.exists(c):\n',
+        '            return c\n',
+        '    return candidates[0]\n'
+    ]
+    cells.append({'cell_type': 'code', 'execution_count': None, 'metadata': {}, 'outputs': [], 'source': c3})
+    
+    c4 = [
+        '!python main.py --dataset floodkaggle --model {MODEL_NAME} --num_classes {NUM_CLASSES} --loss {LOSS_NAME} --size {IMAGE_SIZE} --epochs {EPOCHS} --batch_size {BATCH_SIZE} --lr {LR} --multiseed --seeds {SEEDS_STR} {PRETRAINED_FLAG} --download\n'
+    ]
+    cells.append({'cell_type': 'code', 'execution_count': None, 'metadata': {}, 'outputs': [], 'source': c4})
+    
+    c5 = [
+        '!python main.py --dataset aifloodsense --model {MODEL_NAME} --num_classes {NUM_CLASSES} --loss {LOSS_NAME} --size {IMAGE_SIZE} --epochs {EPOCHS} --batch_size {BATCH_SIZE} --lr {LR} --multiseed --seeds {SEEDS_STR} {PRETRAINED_FLAG} --download\n'
+    ]
+    cells.append({'cell_type': 'code', 'execution_count': None, 'metadata': {}, 'outputs': [], 'source': c5})
+    
+    c6 = [
+        '!python cross_dataset_eval.py --model {MODEL_NAME} --loss {LOSS_NAME} --source_dataset floodkaggle --target_datasets floodkaggle aifloodsense floodvn --seeds {SEEDS_STR} --size {IMAGE_SIZE} --num_classes {NUM_CLASSES} --download\n'
+    ]
+    cells.append({'cell_type': 'code', 'execution_count': None, 'metadata': {}, 'outputs': [], 'source': c6})
+    
+    c7 = [
+        '!python cross_dataset_eval.py --model {MODEL_NAME} --loss {LOSS_NAME} --source_dataset aifloodsense --target_datasets aifloodsense floodkaggle floodvn --seeds {SEEDS_STR} --size {IMAGE_SIZE} --num_classes {NUM_CLASSES} --download\n'
+    ]
+    cells.append({'cell_type': 'code', 'execution_count': None, 'metadata': {}, 'outputs': [], 'source': c7})
+    
+    c8 = [
+        'import os\n',
+        'import shutil\n',
+        'try:\n',
+        '    from google.colab import files\n',
+        'except Exception:\n',
+        '    files = None\n',
+        'bundle_dir = f"{MODEL_NAME}_All_Artifacts"\n',
+        'os.makedirs(bundle_dir, exist_ok=True)\n',
+        'output_dir = "outputs"\n',
+        'if os.path.exists(output_dir):\n',
+        '    for item in sorted(os.listdir(output_dir)):\n',
+        '        src = os.path.join(output_dir, item)\n',
+        '        dst = os.path.join(bundle_dir, item)\n',
+        '        if os.path.isdir(src):\n',
+        '            if os.path.exists(dst):\n',
+        '                shutil.rmtree(dst)\n',
+        '            shutil.copytree(src, dst)\n',
+        '        elif os.path.isfile(src):\n',
+        '            shutil.copy2(src, dst)\n',
+        'zip_filename = f"{MODEL_NAME}_artifacts.zip"\n',
+        'if os.path.exists(zip_filename):\n',
+        '    os.remove(zip_filename)\n',
+        'shutil.make_archive(f"{MODEL_NAME}_artifacts", "zip", bundle_dir)\n',
+        'if files is not None:\n',
+        '    try:\n',
+        '        files.download(zip_filename)\n',
+        '    except Exception:\n',
+        '        pass\n'
+    ]
+    cells.append({'cell_type': 'code', 'execution_count': None, 'metadata': {}, 'outputs': [], 'source': c8})
+    
+    nb = {
+        'cells': cells,
+        'metadata': {
+            'accelerator': 'GPU',
+            'colab': {'gpuType': 'T4', 'provenance': []},
+            'kernelspec': {'display_name': 'Python 3', 'name': 'python3'},
+            'language_info': {'name': 'python'}
+        },
+        'nbformat': 4,
+        'nbformat_minor': 0
+    }
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(nb, f, indent=2)
+    print('Generated:', output_path)
+
+if __name__ == '__main__':
+    create_notebook('bgfmamba', r'd:\AI Project\flood_mamba_edge\bgfmamba.ipynb')
+    create_notebook('mambaedge', r'd:\AI Project\flood_mamba_edge\mambaedge.ipynb')
+    create_notebook('ablation_mamba_bidirectional', r'd:\AI Project\flood_mamba_edge\ablation.ipynb')
